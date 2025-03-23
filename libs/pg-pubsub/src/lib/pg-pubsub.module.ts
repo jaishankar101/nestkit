@@ -1,21 +1,30 @@
 import { DiscoveryModule } from '@golevelup/nestjs-discovery'
 import { DynamicModule, Global, Module } from '@nestjs/common'
-import { InMemoryLockService } from './lock'
-import { PgLockService } from './lock/pg-lock.service'
+import { PgLockService } from './services/pg-lock.service'
 import {
   PG_PUBSUB_CONFIG,
-  PG_PUBSUB_LOCK_SERVICE,
+  PG_PUBSUB_QUEUE_CLEANUP_INTERVAL,
+  PG_PUBSUB_QUEUE_MAX_RETRIES,
+  PG_PUBSUB_QUEUE_MESSAGE_TTL,
   PG_PUBSUB_TRIGGER_NAME,
   PG_PUBSUB_TRIGGER_SCHEMA,
   PgPubSubConfig,
 } from './pg-pubsub'
 import { PgPubSubService } from './pg-pubsub.service'
+import { ListenerDiscoveryService, MessageProcessorService, PgTriggerService, QueueService } from './services'
 
 @Global()
 @Module({
   imports: [DiscoveryModule],
-  providers: [PgPubSubService, PgLockService],
-  exports: [PgPubSubService, PgLockService],
+  providers: [
+    PgPubSubService,
+    PgLockService,
+    QueueService,
+    ListenerDiscoveryService,
+    MessageProcessorService,
+    PgTriggerService,
+  ],
+  exports: [PgPubSubService, PgLockService, QueueService],
 })
 export class PgPubSubModule {
   static forRoot(config: PgPubSubConfig): DynamicModule {
@@ -28,13 +37,14 @@ export class PgPubSubModule {
             ...config,
             triggerSchema: (config.triggerSchema || PG_PUBSUB_TRIGGER_SCHEMA).trim(),
             triggerPrefix: (config.triggerPrefix || PG_PUBSUB_TRIGGER_NAME).trim(),
+            queue: {
+              table: 'pg_pubsub_queue',
+              maxRetries: PG_PUBSUB_QUEUE_MAX_RETRIES,
+              messageTTL: PG_PUBSUB_QUEUE_MESSAGE_TTL,
+              cleanupInterval: PG_PUBSUB_QUEUE_CLEANUP_INTERVAL,
+              ...config.queue,
+            },
           } satisfies PgPubSubConfig,
-        },
-        {
-          provide: PG_PUBSUB_LOCK_SERVICE,
-          useFactory: () => {
-            return config.lockService || new InMemoryLockService()
-          },
         },
       ],
       exports: [PgPubSubService],
