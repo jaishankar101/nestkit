@@ -9,15 +9,12 @@ import { UserController } from './controllers/user.controller'
 import { NotificationController } from './controllers/notification.controller'
 import { NotificationChangeListener } from './listeners/notification-change.listener'
 import { WebsocketGateway } from './gateways/websocket.gateway'
-import { RedisLockService } from './redis/redis-lock.service'
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Notification]),
     PgPubSubModule.forRoot({
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      databaseUrl: process.env['DATABASE_URL']!,
-      lockService: new RedisLockService(),
+      databaseUrl: process.env['DATABASE_URL'] as string,
     }),
   ],
   controllers: [UserController, NotificationController],

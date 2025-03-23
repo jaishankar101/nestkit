@@ -2,19 +2,46 @@
 import { DiscoveredClassWithMeta } from '@golevelup/nestjs-discovery'
 import { SetMetadata } from '@nestjs/common'
 import { EntityTarget } from 'typeorm'
-import { LockService } from './lock'
 
 /**
- * Name of the PostgreSQL pubsub trigger.
+ * Name of the PostgreSQL pubsub trigger channel and prefix for the triggers created.
  */
 export const PG_PUBSUB_TRIGGER_NAME = 'pubsub_trigger'
+
+/**
+ * Schema on which the tables are located and triggers are created.
+ */
+export const PG_PUBSUB_TRIGGER_SCHEMA = 'public'
+
+/**
+ * Name of the PostgreSQL pubsub queue table.
+ */
+export const PG_PUBSUB_QUEUE_TABLE = 'pg_pubsub_queue'
+
+/**
+ * Default ttl for messages in the queue (in milliseconds).
+ * @default 24 hours
+ */
+export const PG_PUBSUB_QUEUE_MESSAGE_TTL = 24 * 60 * 60 * 1000 // 24 hours
+
+/**
+ * Maximum number of retries for a failed message.
+ * @default 5
+ */
+export const PG_PUBSUB_QUEUE_MAX_RETRIES = 5
+
+/**
+ * Default interval to clean up old processed messages (in milliseconds).
+ * @default 1 hour
+ */
+export const PG_PUBSUB_QUEUE_CLEANUP_INTERVAL = 60 * 60 * 1000 // 1 hour
 
 /**
  * Type for a PostgreSQL table INSERT payload.
  */
 export type PgTableInsertPayload<TRow = unknown> = {
-  /** Unique identifier of the payload (used to prevents mulitple handling of the event) */
-  id: string
+  /** Unique identifier of the payload (pass it to the onError callback to mark the payload handling as failed and retry later) */
+  id: number
 
   /** Type of the event */
   event: 'INSERT'
@@ -30,8 +57,8 @@ export type PgTableInsertPayload<TRow = unknown> = {
  * Type for a PostgreSQL table DELETE payload.
  */
 export type PgTableDeletePayload<TRow = unknown> = {
-  /** Unique identifier of the payload (used to prevents mulitple handling of the event) */
-  id: string
+  /** Unique identifier of the payload (pass it to the onError callback to mark the payload handling as failed and retry later) */
+  id: number
 
   /** Type of the event */
   event: 'DELETE'
@@ -47,8 +74,8 @@ export type PgTableDeletePayload<TRow = unknown> = {
  * Type for a PostgreSQL table UPDATE payload.
  */
 export type PgTableUpdatePayload<TRow = unknown> = {
-  /** Unique identifier of the payload (used to prevents mulitple handling of the event) */
-  id: string
+  /** Unique identifier of the payload (pass it to the onError callback to mark the payload handling as failed and retry later) */
+  id: number
 
   /** Type of the event */
   event: 'UPDATE'
@@ -100,14 +127,23 @@ export type PgTableChanges<TRow = unknown> = {
 }
 
 /**
+ * Type for a callback to handle errors when processing a change.
+ * @remarks
+ * - Used to mark the message as failed and retry later.
+ * @param id The id of the messages that failed.
+ */
+export type PgTableChangeErrorHandler = (ids: number[]) => void
+
+/**
  * Type for a handler that listens to changes on a PostgreSQL table.
  */
 export interface PgTableChangeListener<TRow> {
   /**
    * Process the batch of changes received for a PostgreSQL table.
    * @param changes The batch of changes for the table.
+   * @param onError Callback to handle errors when processing a change. (used to mark the message as failed and retry later)
    */
-  process(changes: PgTableChanges<TRow>): Promise<void>
+  process(changes: PgTableChanges<TRow>, onError?: PgTableChangeErrorHandler): Promise<void>
 }
 
 /**
@@ -126,6 +162,11 @@ export type RegisterPgTableChangeListenerMetadata<T = any> = {
    * Entity type to listen for changes.
    */
   target: EntityTarget<T>
+
+  /**
+   * Schema on which the table is located. (default: {@link PG_PUBSUB_TRIGGER_SCHEMA})
+   */
+  schema?: string
 
   /**
    * List of events to listen for.
@@ -165,19 +206,91 @@ export type PgPubSubConfig = {
    * Database URL to connect to.
    */
   databaseUrl: string
+
+  /**
+   * Schema on which the tables are located.
+   * If not provided, the default {@link PG_PUBSUB_TRIGGER_SCHEMA} will be used.
+
+   */
+  triggerSchema?: string
+
+  /**
+   * Prefix to use for the triggers.
+   * If not provided, the default {@link PG_PUBSUB_TRIGGER_NAME} prefix will be used.
+   * @remarks
+   * - The trigger name will be in the format `${triggerPrefix}_${table_name}`.
+   * - This value will also be used as the channel name for the pubsub.
+   * - **IMPORTANT**: All triggers starting with the same prefix will be dropped when the module is initialized.
+   */
+  triggerPrefix?: string
+
+  /**
+   * Queue configuration
+   */
+  queue?: QueueConfig
+
   /**
    * Custom lock service to use
    * If not provided, an in-memory lock service will be used
+   * @deprecated Will be removed in future versions
    */
-  lockService?: LockService
+  lockService?: any
+}
+
+/**
+ * Status of a queued message
+ */
+export enum MessageStatus {
+  PENDING = 'pending',
+  PROCESSING = 'processing',
+  PROCESSED = 'processed',
+  FAILED = 'failed',
+}
+
+/**
+ * Representation of a message in the queue
+ */
+export interface QueuedMessage<T = unknown> {
+  id: number
+  channel: string
+  payload: T
+  created_at: Date
+  processed_at: Date | null
+  retry_count: number
+  next_retry_at: Date | null
+  status: MessageStatus
+}
+
+/**
+ * Queue processing configuration
+ */
+export interface QueueConfig {
+  /**
+   * Name of the queue table
+   * @default PG_PUBSUB_QUEUE_TABLE
+   */
+  table?: string
+
+  /**
+   * Maximum number of retries for a failed message
+   * @default PG_PUBSUB_QUEUE_MAX_RETRIES
+   */
+  maxRetries?: number
+
+  /**
+   * Time-to-live for messages in milliseconds
+   * @default PG_PUBSUB_QUEUE_MESSAGE_TTL
+   */
+  messageTTL?: number
+
+  /**
+   * Interval in milliseconds to clean up old processed messages
+   * @default PG_PUBSUB_QUEUE_CLEANUP_INTERVAL
+   */
+  cleanupInterval?: number
 }
 
 /**
  * Symbol for the configuration for the PostgreSQL pubsub module.
  */
 export const PG_PUBSUB_CONFIG = Symbol('PG_PUBSUB_CONFIG')
-
-/**
- * Symbol for the lock service used by the PostgreSQL pubsub module.
- */
-export const PG_PUBSUB_LOCK_SERVICE = Symbol('PG_PUBSUB_LOCK_SERVICE')
