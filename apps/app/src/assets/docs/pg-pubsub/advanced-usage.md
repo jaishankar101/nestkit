@@ -1,5 +1,30 @@
 # Advanced Usage
 
+## Module Configuration Options
+
+The library provides configuration options to customize its behavior. You can pass an optional configuration object when initializing the PgPubSubModule in your module. The config object is fully documented.
+
+```typescript
+import { Module } from '@nestjs/common'
+import { TypeOrmModule } from '@nestjs/typeorm'
+import { PgPubSubModule } from '@cisstech/nestjs-pg-pubsub'
+
+@Module({
+  imports: [
+    TypeOrmModule.forRoot({
+      /* your TypeORM config */
+    }),
+    PgPubSubModule.forRoot({
+      databaseUrl: 'postgresql://user:password@localhost:5432/dbname',
+      triggerPrefix: 'my_trigger_prefix',
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+- **triggerPrefix**: Defines the prefix used for all database triggers dynamically created by the library. This configuration is **critical** as during application initialization, the library will automatically delete any existing database triggers whose names start with this prefix before creating new ones. Choose this value carefully to avoid unintentional deletion of triggers used by other parts of your application. If not specified, it defaults to the value defined in the `PG_PUBSUB_TRIGGER_NAME` constant exported by the library.
+
 ## Controlling the Listener
 
 The library provides methods to control the behavior of the PostgreSQL listener at runtime:

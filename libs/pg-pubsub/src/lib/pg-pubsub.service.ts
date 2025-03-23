@@ -7,7 +7,6 @@ import {
   DiscoveredPgTableChangeListener,
   PG_PUBSUB_CONFIG,
   PG_PUBSUB_LOCK_SERVICE,
-  PG_PUBSUB_TRIGGER_NAME,
   PgPubSubConfig,
   PgTableChangeListener,
   PgTableChangePayload,
@@ -108,28 +107,27 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
    * Resume the PostgreSQL listener.
    */
   public async resume(): Promise<void> {
-    if (!this.subscriber) {
-      this.subscriber = createPostgresSubscriber(
-        {
-          connectionString: this.config.databaseUrl,
-        },
+    this.subscriber =
+      this.subscriber ??
+      createPostgresSubscriber(
+        { connectionString: this.config.databaseUrl },
         {
           retryInterval: (retryCount) => Math.min(1000 * 2 ** retryCount, 30000),
           retryTimeout: Number.POSITIVE_INFINITY,
         }
       )
 
-      this.subscriber.events.on('error', (error) => {
-        this.logger.error(error)
-      })
+    this.subscriber.events.on('error', (error) => {
+      this.logger.error(error)
+    })
 
-      this.subscriber.events.on('reconnect', (attempt) => {
-        this.logger.log(`Reconnecting to PostgreSQL (attempt ${attempt})`)
-      })
-    }
+    this.subscriber.events.on('reconnect', (attempt) => {
+      this.logger.log(`Reconnecting to PostgreSQL (attempt ${attempt})`)
+    })
 
     await this.subscriber.connect()
     await this.watchPubSubTriggers()
+
     this.logger.log('PostgreSQL listener resumed')
   }
 
@@ -221,7 +219,8 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
       )
       .subscribe(this.processChanges.bind(this))
 
-    await this.susbcribe<PgTableChangePayload<unknown>>(PG_PUBSUB_TRIGGER_NAME, async (payload) => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    await this.susbcribe<PgTableChangePayload<unknown>>(this.config.triggerPrefix!, async (payload) => {
       const key = `pg_pubsub_${payload.table}_${payload.event}_${payload.id}`
       await this.lockService.tryLock({
         key,
@@ -294,7 +293,7 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
           schema,
           listeners.map<Trigger>((listener) => ({
             table: listener.tableName,
-            name: `${PG_PUBSUB_TRIGGER_NAME}_${listener.tableName.toLowerCase()}`,
+            name: `${this.config.triggerPrefix}_${listener.tableName.toLowerCase()}`,
             events: listener.events,
             payloadFields: listener.payloadFields,
           }))
@@ -372,7 +371,7 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
               'data', ${buildJson('NEW')}
             );
           END IF;
-            PERFORM pg_notify('${PG_PUBSUB_TRIGGER_NAME}', payload::text);
+            PERFORM pg_notify('${this.config.triggerPrefix}', payload::text);
             RETURN NEW;
           END;
           $BODY$
@@ -398,7 +397,7 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
           event_object_table as table
         FROM information_schema.triggers
         WHERE trigger_schema = '${schema}'
-        AND trigger_name LIKE '${PG_PUBSUB_TRIGGER_NAME}_%'`)) ?? []
+        AND trigger_name LIKE '${this.config.triggerPrefix}_%'`)) ?? []
     )
   }
 

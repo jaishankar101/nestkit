@@ -165,6 +165,16 @@ export type PgPubSubConfig = {
    * Database URL to connect to.
    */
   databaseUrl: string
+
+  /**
+   * Prefix to use for the triggers.
+   * If not provided, the default {@link PG_PUBSUB_TRIGGER_NAME} prefix will be used.
+   * @remarks
+   * - The trigger name will be in the format `${triggerPrefix}_${table_name}`.
+   * - **IMPORTANT**: All triggers starting with the same prefix will be dropped when the module is initialized.
+   */
+  triggerPrefix?: string
+
   /**
    * Custom lock service to use
    * If not provided, an in-memory lock service will be used

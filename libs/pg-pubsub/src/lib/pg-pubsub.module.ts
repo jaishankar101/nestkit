@@ -1,6 +1,6 @@
 import { DynamicModule, Global, Module } from '@nestjs/common'
 import { DiscoveryModule } from '@golevelup/nestjs-discovery'
-import { PG_PUBSUB_CONFIG, PG_PUBSUB_LOCK_SERVICE, PgPubSubConfig } from './pg-pubsub'
+import { PG_PUBSUB_CONFIG, PG_PUBSUB_LOCK_SERVICE, PG_PUBSUB_TRIGGER_NAME, PgPubSubConfig } from './pg-pubsub'
 import { PgPubSubService } from './pg-pubsub.service'
 import { InMemoryLockService } from './lock'
 
@@ -17,7 +17,10 @@ export class PgPubSubModule {
       providers: [
         {
           provide: PG_PUBSUB_CONFIG,
-          useValue: config,
+          useValue: {
+            ...config,
+            triggerPrefix: (config.triggerPrefix || PG_PUBSUB_TRIGGER_NAME).trim(),
+          } satisfies PgPubSubConfig,
         },
         {
           provide: PG_PUBSUB_LOCK_SERVICE,
