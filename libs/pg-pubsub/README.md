@@ -19,6 +19,8 @@ A NestJS module for real-time PostgreSQL notifications using PubSub
 
 The NestJS PG-PubSub library is a powerful tool that facilitates real-time communication between your NestJS application and PostgreSQL database using the native PostgreSQL Pub/Sub mechanism. It allows your application to listen for changes on specific database tables and respond to those changes in real-time, making it ideal for building reactive applications with immediate data synchronization and event-driven workflows.
 
+![Diagram](./mermaid.png)
+
 ## Features
 
 - **Real-Time Table Change Detection**: Automatically listen for INSERT, UPDATE, and DELETE events on PostgreSQL tables
