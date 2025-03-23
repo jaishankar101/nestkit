@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import createPostgresSubscriber, { Subscriber } from 'pg-listen'
 import { Subject, Subscription, bufferTime, filter } from 'rxjs'
 import { DataSource, EntityMetadata } from 'typeorm'
+import { LockService } from './lock'
 import {
   DiscoveredPgTableChangeListener,
   PG_PUBSUB_CONFIG,
@@ -17,18 +18,19 @@ import {
   RegisterPgTableChangeListenerMeta,
   RegisterPgTableChangeListenerMetadata,
 } from './pg-pubsub'
-import { LockService } from './lock'
 
 type Trigger = {
   name: string
   table: string
+  schema: string
   events?: PgTableChangeType[]
   payloadFields?: string[]
 }
 
 type Listener = {
   events?: PgTableChangeType[]
-  tableName: string
+  table: string
+  schema: string
   payloadFields?: string[]
 }
 
@@ -280,20 +282,18 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
    * @param providers The discovered PostgreSQL table change listeners.
    */
   private async injectPubSubTriggers(providers: DiscoveredPgTableChangeListener[]): Promise<void> {
-    const schema = 'public'
-
-    const listeners = this.createListenersFromProviders(providers)
-
     await this.lockService.tryLock({
       key: 'pg_pubsub',
       duration: 1000,
       onAccept: async () => {
-        await this.dropTriggers(schema, await this.listTriggers(schema))
+        const triggers = await this.listTriggers()
+        const listeners = this.createListenersFromProviders(providers)
+        await this.dropTriggers(triggers)
         await this.createTriggers(
-          schema,
           listeners.map<Trigger>((listener) => ({
-            table: listener.tableName,
-            name: `${this.config.triggerPrefix}_${listener.tableName.toLowerCase()}`,
+            table: listener.table,
+            schema: listener.schema,
+            name: `${this.config.triggerPrefix}_${listener.table.toLowerCase()}`,
             events: listener.events,
             payloadFields: listener.payloadFields,
           }))
@@ -303,21 +303,35 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
     })
   }
 
-  private async dropTriggers(schema: string, triggers: Trigger[]) {
-    if (!triggers.length) return
-
-    this.logger.log(`Dropping triggers:\n${triggers.map((t) => `${t.table}.${t.name}`).join(',\n')}`)
-    await this.dataSource.query(triggers.map((t) => `DROP FUNCTION IF EXISTS ${schema}."${t.name}" CASCADE`).join('; '))
+  private async listTriggers(): Promise<Trigger[]> {
+    const triggers = await this.dataSource.query<Trigger[]>(`
+      SELECT
+        DISTINCT(trigger_name) as name,
+        trigger_schema as schema,
+        event_object_table as table
+      FROM information_schema.triggers
+      WHERE trigger_name LIKE '${this.config.triggerPrefix}_%'
+    `)
+    return triggers ?? []
   }
 
-  private async createTriggers(schema: string, triggers: Trigger[]) {
+  private async dropTriggers(triggers: Trigger[]) {
     if (!triggers.length) return
 
-    this.logger.log(`Creating triggers:\n${triggers.map((t) => `${t.table}.${t.name}`).join(',\n')}`)
+    this.logger.log(`Dropping triggers:\n${triggers.map((t) => `${t.schema}.${t.table}.${t.name}`).join(',\n')}`)
+    await this.dataSource.query(
+      triggers.map((t) => `DROP FUNCTION IF EXISTS ${t.schema}."${t.name}" CASCADE`).join('; ')
+    )
+  }
+
+  private async createTriggers(triggers: Trigger[]) {
+    if (!triggers.length) return
+
+    this.logger.log(`Creating triggers:\n${triggers.map((t) => `${t.schema}.${t.table}.${t.name}`).join(',\n')}`)
 
     await Promise.all(
       triggers.map(async (t) => {
-        const table = `"${schema}"."${t.table}"`
+        const table = `"${t.schema}"."${t.table}"`
         const payloadFields = t.payloadFields
         const columns = this.propNameToColumnNames[t.table]
 
@@ -389,18 +403,6 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
     )
   }
 
-  private async listTriggers(schema: string): Promise<Trigger[]> {
-    return (
-      (await this.dataSource.query<Trigger[]>(`
-        SELECT
-          DISTINCT(trigger_name) as name,
-          event_object_table as table
-        FROM information_schema.triggers
-        WHERE trigger_schema = '${schema}'
-        AND trigger_name LIKE '${this.config.triggerPrefix}_%'`)) ?? []
-    )
-  }
-
   /**
    * Create and return an entity based on the table name and data received from PostgreSQL.
    * @param tableName The name of the table.
@@ -422,27 +424,34 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
 
   private createListenersFromProviders(providers: DiscoveredPgTableChangeListener[]) {
     const listeners: Listener[] = []
+
     providers.forEach((provider) => {
       const metadata = this.dataSource.getMetadata(provider.meta.target)
 
-      const listener = listeners.find((l) => l.tableName === metadata.tableName)
+      const listener = listeners.find((l) => l.table === metadata.tableName)
       if (listener) {
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        listener.schema = provider.meta.schema || listener.schema || this.config.triggerSchema!
         listener.events = [...new Set([...(listener.events || []), ...(provider.meta.events || [])])]
         listener.payloadFields = [
           ...new Set([...(listener.payloadFields || []), ...(provider.meta.payloadFields || [])]),
         ] as string[]
-      } else {
-        listeners.push({
-          tableName: metadata.tableName,
-          events: provider.meta.events,
-          payloadFields: provider.meta.payloadFields as string[],
-        })
+        return
       }
+
+      listeners.push({
+        table: metadata.tableName,
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        schema: provider.meta.schema || this.config.triggerSchema!,
+        events: provider.meta.events,
+        payloadFields: provider.meta.payloadFields as string[],
+      })
     })
 
-    this.tableNames = listeners.map((t) => t.tableName)
     this.tablesMap = {}
+    this.tableNames = listeners.map((t) => t.table)
     this.columnNameToPropNames = {}
+
     this.listenersMap = providers.reduce(
       (acc, provider) => {
         const tableMeta = this.dataSource.getMetadata(provider.meta.target)

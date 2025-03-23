@@ -5,9 +5,14 @@ import { EntityTarget } from 'typeorm'
 import { LockService } from './lock'
 
 /**
- * Name of the PostgreSQL pubsub trigger.
+ * Name of the PostgreSQL pubsub trigger channel and prefix for the triggers created.
  */
 export const PG_PUBSUB_TRIGGER_NAME = 'pubsub_trigger'
+
+/**
+ * Schema on which the tables are located and triggers are created.
+ */
+export const PG_PUBSUB_TRIGGER_SCHEMA = 'public'
 
 /**
  * Type for a PostgreSQL table INSERT payload.
@@ -128,6 +133,11 @@ export type RegisterPgTableChangeListenerMetadata<T = any> = {
   target: EntityTarget<T>
 
   /**
+   * Schema on which the table is located. (default: {@link PG_PUBSUB_TRIGGER_SCHEMA})
+   */
+  schema?: string
+
+  /**
    * List of events to listen for.
    * @remarks
    * - If not provided, all events will be listened for.
@@ -167,10 +177,18 @@ export type PgPubSubConfig = {
   databaseUrl: string
 
   /**
+   * Schema on which the tables are located.
+   * If not provided, the default {@link PG_PUBSUB_TRIGGER_SCHEMA} will be used.
+
+   */
+  triggerSchema?: string
+
+  /**
    * Prefix to use for the triggers.
    * If not provided, the default {@link PG_PUBSUB_TRIGGER_NAME} prefix will be used.
    * @remarks
    * - The trigger name will be in the format `${triggerPrefix}_${table_name}`.
+   * - This value will also be used as the channel name for the pubsub.
    * - **IMPORTANT**: All triggers starting with the same prefix will be dropped when the module is initialized.
    */
   triggerPrefix?: string

@@ -16,6 +16,7 @@ import { PgPubSubModule } from '@cisstech/nestjs-pg-pubsub'
     }),
     PgPubSubModule.forRoot({
       databaseUrl: 'postgresql://user:password@localhost:5432/dbname',
+      triggerSchema: 'myschema',
       triggerPrefix: 'my_trigger_prefix',
     }),
   ],
