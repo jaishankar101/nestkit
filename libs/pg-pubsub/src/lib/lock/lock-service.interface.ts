@@ -5,7 +5,8 @@ export interface LockOptions {
   key: string
 
   /**
-   * The duration of the lock in milliseconds
+   * The duration of the lock in milliseconds.
+   * The lock will be hold until this duration expires even if the onAccept callback completes earlier.
    */
   duration: number
 
@@ -17,7 +18,7 @@ export interface LockOptions {
   /**
    * Optional callback to execute when the lock is rejected
    */
-  onReject?: () => Promise<void> | void
+  onReject?: (error?: unknown) => Promise<void> | void
 }
 
 /**

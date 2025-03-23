@@ -1,6 +1,7 @@
 import { DiscoveryModule } from '@golevelup/nestjs-discovery'
 import { DynamicModule, Global, Module } from '@nestjs/common'
 import { InMemoryLockService } from './lock'
+import { PgLockService } from './lock/pg-lock.service'
 import {
   PG_PUBSUB_CONFIG,
   PG_PUBSUB_LOCK_SERVICE,
@@ -13,8 +14,8 @@ import { PgPubSubService } from './pg-pubsub.service'
 @Global()
 @Module({
   imports: [DiscoveryModule],
-  providers: [PgPubSubService],
-  exports: [PgPubSubService],
+  providers: [PgPubSubService, PgLockService],
+  exports: [PgPubSubService, PgLockService],
 })
 export class PgPubSubModule {
   static forRoot(config: PgPubSubConfig): DynamicModule {

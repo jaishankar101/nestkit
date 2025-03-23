@@ -18,6 +18,7 @@ import {
   RegisterPgTableChangeListenerMeta,
   RegisterPgTableChangeListenerMetadata,
 } from './pg-pubsub'
+import { PgLockService } from './lock/pg-lock.service'
 
 type Trigger = {
   name: string
@@ -70,6 +71,7 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
     private readonly config: PgPubSubConfig,
     @Inject(PG_PUBSUB_LOCK_SERVICE)
     private readonly lockService: LockService,
+    private readonly pgLockService: PgLockService,
     private readonly dataSource: DataSource,
     private readonly discoveryService: DiscoveryService
   ) {}
@@ -78,7 +80,6 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
     const providers = await this.discoveryService.providersWithMetaAtKey<RegisterPgTableChangeListenerMetadata>(
       RegisterPgTableChangeListenerMeta
     )
-
     await this.injectPubSubTriggers(providers)
     await this.resume()
   }
@@ -274,6 +275,7 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  //#region PostgreSQL Pub/Sub Triggers Injection
   /**
    * Inject the PostgreSQL pub/sub triggers.
    * This is done by creating a PostgreSQL function that creates triggers for the specified tables.
@@ -282,9 +284,9 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
    * @param providers The discovered PostgreSQL table change listeners.
    */
   private async injectPubSubTriggers(providers: DiscoveredPgTableChangeListener[]): Promise<void> {
-    await this.lockService.tryLock({
+    this.pgLockService.tryLock({
       key: 'pg_pubsub',
-      duration: 1000,
+      duration: 5_000,
       onAccept: async () => {
         const triggers = await this.listTriggers()
         const listeners = this.createListenersFromProviders(providers)
@@ -299,7 +301,7 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
           }))
         )
       },
-      onReject: () => this.logger.warn('Failed to acquire lock for pg_pubsub'),
+      onReject: () => this.logger.warn('Another instance is already updating PubSub triggers'),
     })
   }
 
@@ -402,6 +404,7 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
       })
     )
   }
+  //#endregion
 
   /**
    * Create and return an entity based on the table name and data received from PostgreSQL.
