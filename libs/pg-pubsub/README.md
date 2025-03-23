@@ -19,8 +19,6 @@ A NestJS module for real-time PostgreSQL notifications using PubSub
 
 The NestJS PG-PubSub library is a powerful tool that facilitates real-time communication between your NestJS application and PostgreSQL database using the native PostgreSQL Pub/Sub mechanism. It allows your application to listen for changes on specific database tables and respond to those changes in real-time, making it ideal for building reactive applications with immediate data synchronization and event-driven workflows.
 
-**Important Note:** PostgreSQL notifications are transient. If your NestJS application (or a listener) is not actively connected and listening _at the precise moment_ a notification is sent, the notification is missed and lost. Ensure your application instances are running and listening for reliable real-time updates.
-
 ## Features
 
 - **Real-Time Table Change Detection**: Automatically listen for INSERT, UPDATE, and DELETE events on PostgreSQL tables
@@ -28,10 +26,14 @@ The NestJS PG-PubSub library is a powerful tool that facilitates real-time commu
 - **Automatic Trigger Management**: Dynamically creates and manages PostgreSQL triggers
 - **Event Buffering and Batching**: Optimizes performance by buffering and batching events
 - **Entity Mapping**: Maps database column names to entity property names automatically
-- **Configurable Locking Mechanism**: Built-in locking system with configurable implementation, designed for \*\*handling concurrent processing by multiple subscribers in distributed environments.
-- **Custom Event Support**: Subscribe to and handle custom PostgreSQL notification events
-- **Suspend/Resume Capability**: Control when the listeners should be active
-- **Pub/Sub Architecture & Multiple Subscribers**: Leverages PostgreSQL's native Pub/Sub to allow **multiple instances of your application (or different services) to subscribe to the same database events.** This enables scalability and distribution of real-time event processing.
+- **Persistent Message Queue**: Messages are stored in a PostgreSQL table to prevent data loss
+- **Reactive Processing**: Immediately pulls and processes messages when notifications are received
+- **TTL and Retry System**: Implements time-to-live and automatic retries for failed message processing
+- **Message Ordering**: Preserves message processing order using row IDs
+- **Error Handling**: Provides mechanisms to handle and retry failed messages
+- **Auto Cleanup**: Automatically removes old processed messages to keep the queue size manageable
+- **Multiple Subscribers**: Leverages PostgreSQL's native Pub/Sub to allow multiple instances of your application to subscribe to the same database events
+- **Fallback Reliability**: Includes low-frequency background polling to ensure no messages are missed
 
 ## Installation
 
@@ -57,8 +59,13 @@ import { UserTableChangeListener } from './user-change.listener'
     }),
     PgPubSubModule.forRoot({
       databaseUrl: 'postgresql://user:password@localhost:5432/dbname',
-      // Optionally provide a custom lock service
-      // lockService: customLockService,
+      // Optional queue configuration
+      queue: {
+        maxRetries: 5,
+        messageTTL: 24 * 60 * 60 * 1000, // 24 hours
+        cleanupInterval: 60 * 60 * 1000, // 1 hour
+        table: 'pg_pubsub_queue',
+      },
     }),
   ],
   providers: [UserTableChangeListener],
@@ -72,7 +79,12 @@ Create a class that implements the `PgTableChangeListener<T>` interface and deco
 
 ```typescript
 import { Injectable } from '@nestjs/common'
-import { RegisterPgTableChangeListener, PgTableChangeListener, PgTableChanges } from '@cisstech/nestjs-pg-pubsub'
+import {
+  RegisterPgTableChangeListener,
+  PgTableChangeListener,
+  PgTableChanges,
+  PgTableChangeErrorHandler,
+} from '@cisstech/nestjs-pg-pubsub'
 import { User } from './entities/user.entity'
 
 @Injectable()
@@ -81,29 +93,36 @@ import { User } from './entities/user.entity'
   payloadFields: ['id', 'email'], // Optional: specify which fields to include in the payload
 })
 export class UserTableChangeListener implements PgTableChangeListener<User> {
-  async process(changes: PgTableChanges<User>): Promise<void> {
-    // Handle table changes here
+  async process(changes: PgTableChanges<User>, onError?: PgTableChangeErrorHandler): Promise<void> {
+    try {
+      // Handle table changes here
 
-    // Process all changes
-    changes.all.forEach((change) => {
-      console.log(`Change type: ${change.event} for user with id: ${change.data.id}`)
-    })
+      // Process all changes
+      changes.all.forEach((change) => {
+        console.log(`Change type: ${change.event} for user with id: ${change.data.id}`)
+      })
 
-    // Process inserts
-    changes.INSERT.forEach((insert) => {
-      console.log(`New user created: ${insert.data.email}`)
-    })
+      // Process inserts
+      changes.INSERT.forEach((insert) => {
+        console.log(`New user created: ${insert.data.email}`)
+      })
 
-    // Process updates
-    changes.UPDATE.forEach((update) => {
-      console.log(`User updated: ${update.data.new.email} (was: ${update.data.old.email})`)
-      console.log(`Updated fields: ${update.data.updatedFields.join(', ')}`)
-    })
+      // Process updates
+      changes.UPDATE.forEach((update) => {
+        console.log(`User updated: ${update.data.new.email} (was: ${update.data.old.email})`)
+        console.log(`Updated fields: ${update.data.updatedFields.join(', ')}`)
+      })
 
-    // Process deletes
-    changes.DELETE.forEach((deletion) => {
-      console.log(`User deleted: ${deletion.data.email}`)
-    })
+      // Process deletes
+      changes.DELETE.forEach((deletion) => {
+        console.log(`User deleted: ${deletion.data.email}`)
+      })
+    } catch {
+      // If processing fails, mark all messages as failed for retry
+      if (onError) {
+        onError(changes.all.map((change) => change.id))
+      }
+    }
   }
 }
 ```
@@ -121,8 +140,8 @@ export class CustomEventService implements OnModuleInit {
   constructor(private readonly pgPubSubService: PgPubSubService) {}
 
   async onModuleInit(): Promise<void> {
-    await this.pgPubSubService.susbcribe<{ userId: string; action: string }>('custom-event', (payload) => {
-      console.log(`Custom event received for user ${payload.userId}: ${payload.action}`)
+    await this.pgPubSubService.susbcribe<number>('custom-event', (payload) => {
+      console.log(`Received notification:`, payload)
     })
   }
 }
@@ -130,13 +149,13 @@ export class CustomEventService implements OnModuleInit {
 
 ### 4. Publishing Custom Events from PostgreSQL
 
-You can publish custom events from PostgreSQL using the `pg_notify` function:
+You can publish custom events from PostgreSQL by inserting into the queue table:
 
 ```sql
 -- Example trigger function that publishes a custom event
 CREATE OR REPLACE FUNCTION notify_custom_event() RETURNS TRIGGER AS $$
 BEGIN
-  PERFORM pg_notify('custom-event', json_build_object('userId', NEW.id, 'action', 'custom_action')::text);
+  PERFORM pg_notify('custom-event', 'Hello world');
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -146,6 +165,33 @@ CREATE TRIGGER custom_event_trigger
   FOR EACH ROW
   EXECUTE PROCEDURE notify_custom_event();
 ```
+
+## How It Works
+
+### Queue-Based Architecture with Reactive Processing
+
+This library implements a hybrid queue-based approach to ensure reliable and efficient message processing:
+
+1. **Message Storage**: When a database change occurs, a trigger function:
+
+   - Generates a payload with change details
+   - Inserts the payload into a queue table
+   - Sends a notification with just the message ID
+
+2. **Message Processing**:
+
+   - The application listens for notifications and immediately pulls messages when notified
+   - Messages are processed in order using `SELECT FOR UPDATE SKIP LOCKED`
+   - A low-frequency fallback polling mechanism ensures no messages are missed
+   - Successful processing marks messages as processed
+
+3. **Reliability Features**:
+   - Message persistence: All changes are stored in the database
+   - Retry mechanism: Failed messages are retried with exponential backoff
+   - TTL management: Old messages are automatically cleaned up
+   - Ordering: Messages are processed in the order they were created
+
+This approach combines the best of both worlds: reactive performance and reliable delivery.
 
 ## Documentation
 
