@@ -1,164 +1,325 @@
-import { INestApplication, Injectable } from '@nestjs/common'
+import { INestApplication } from '@nestjs/common'
 import { Test, TestingModule } from '@nestjs/testing'
 import { TypeOrmModule, getRepositoryToken } from '@nestjs/typeorm'
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, Repository } from 'typeorm'
-import { PgPubSubModule, PgTableChangeListener, PgTableChanges, RegisterPgTableChangeListener } from '..'
+import { Column, Entity, PrimaryGeneratedColumn, Repository } from 'typeorm'
+import {
+  PgPubSubModule,
+  PgPubSubService,
+  PgTableChangeListener,
+  PgTableChanges,
+  RegisterPgTableChangeListener,
+} from '..'
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { createTestDatabase } from '@cisstech/testing'
+import { DataSource } from 'typeorm'
+import { MessageStatus, PgTableChangeErrorHandler } from './pg-pubsub'
+import { QueueService } from './services'
 
-/**
- * Test entity for integration testing
- */
-@Entity('pg_pubsub_test_entity')
-class TestEntity {
-  @PrimaryGeneratedColumn('uuid')
-  id!: string
+// Test entity
+@Entity('test_users')
+class TestUser {
+  @PrimaryGeneratedColumn()
+  id!: number
 
   @Column()
   name!: string
 
-  @Column({ default: false })
-  active!: boolean
-
-  @CreateDateColumn()
-  createdAt!: Date
+  @Column()
+  email!: string
 }
 
-/**
- * Mock listener for testing purposes
- */
-@Injectable()
-@RegisterPgTableChangeListener(TestEntity, {
-  events: ['INSERT', 'UPDATE', 'DELETE'],
-  payloadFields: ['id', 'name', 'active'],
-})
-class TestEntityListener implements PgTableChangeListener<TestEntity> {
-  public insertEvents: TestEntity[] = []
-  public updateEvents: Array<{
-    old: TestEntity
-    new: TestEntity
-    updatedFields: string[]
-  }> = []
-  public deleteEvents: TestEntity[] = []
-  public processCallCount = 0
+// Test listener
+@RegisterPgTableChangeListener(TestUser)
+class TestUserListener implements PgTableChangeListener<TestUser> {
+  public processedChanges: PgTableChanges<TestUser>[] = []
+  public processingDelay = 0
+  public shouldFail = false
 
-  async process(changes: PgTableChanges<TestEntity>): Promise<void> {
-    this.processCallCount++
+  async process(changes: PgTableChanges<TestUser>, onError: PgTableChangeErrorHandler): Promise<void> {
+    if (this.processingDelay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.processingDelay))
+    }
 
-    // Store received events
-    changes.INSERT.forEach((insert) => this.insertEvents.push(insert.data))
-    changes.UPDATE.forEach((update) => this.updateEvents.push(update.data))
-    changes.DELETE.forEach((deletion) => this.deleteEvents.push(deletion.data))
+    if (this.shouldFail) {
+      onError(changes.all.map((change) => change.id))
+      return
+    }
+
+    this.processedChanges.push(changes)
   }
 }
 
-describe('PgPubSub Integration Test', () => {
+describe('PgPubSub Integration', () => {
   let app: INestApplication
   let moduleRef: TestingModule
-  let repository: Repository<TestEntity>
-  let listener: TestEntityListener
+  let dataSource: DataSource
+  let pgPubSubService: PgPubSubService
+  let queueService: QueueService
+  let testListener: TestUserListener
+  let userRepository: Repository<TestUser>
 
   beforeAll(async () => {
     const testDbUrl = await createTestDatabase()
 
-    // Now create the actual test module
+    // Create module
     moduleRef = await Test.createTestingModule({
       imports: [
         TypeOrmModule.forRoot({
           type: 'postgres',
           url: testDbUrl,
-          entities: [TestEntity],
+          entities: [TestUser],
           synchronize: true,
-          logging: false,
         }),
-        TypeOrmModule.forFeature([TestEntity]),
+        TypeOrmModule.forFeature([TestUser]),
         PgPubSubModule.forRoot({
           databaseUrl: testDbUrl,
+          triggerPrefix: 'test_pubsub',
+          queue: {
+            table: 'test_pg_pubsub_queue',
+            maxRetries: 3,
+          },
         }),
       ],
-      providers: [TestEntityListener],
+      providers: [TestUserListener],
     }).compile()
 
     app = moduleRef.createNestApplication()
     await app.init()
 
-    repository = moduleRef.get<Repository<TestEntity>>(getRepositoryToken(TestEntity))
-    listener = moduleRef.get<TestEntityListener>(TestEntityListener)
+    // Get services
+    dataSource = app.get(DataSource)
+    pgPubSubService = app.get(PgPubSubService)
+    queueService = app.get(QueueService)
+    testListener = app.get(TestUserListener)
+    userRepository = app.get(getRepositoryToken(TestUser))
 
-    // Wait for PgPubSub to initialize triggers
+    // Make sure PG-PubSub is ready
     await new Promise((resolve) => setTimeout(resolve, 1000))
-  }, 30000) // Increase timeout for database initialization
+  }, 30000)
 
   afterAll(async () => {
-    await app?.close()
+    await app.close()
   }, 10000)
 
-  it('should detect an INSERT event', async () => {
-    // Create a test entity
-    const entity = await repository.save({
-      name: 'Test INSERT',
-      active: true,
-    })
-
-    // Wait for event processing
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    // Check if the listener received the event
-    expect(listener.insertEvents.length).toBeGreaterThanOrEqual(1)
-    expect(listener.insertEvents.some((e) => e.id === entity.id)).toBe(true)
-    expect(listener.insertEvents.some((e) => e.name === 'Test INSERT')).toBe(true)
+  beforeEach(async () => {
+    testListener.processedChanges = []
+    testListener.processingDelay = 0
+    testListener.shouldFail = false
   })
 
-  it('should detect an UPDATE event', async () => {
-    // Create a test entity
-    const entity = await repository.save({
-      name: 'Test UPDATE',
-      active: false,
+  describe('Basic CRUD operations', () => {
+    it('should detect insert operations', async () => {
+      // Insert test user
+      await userRepository.save({
+        name: 'Test User',
+        email: 'test@example.com',
+      })
+
+      // Wait for processing
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+
+      // Verify listener was called
+      expect(testListener.processedChanges.length).toBe(1)
+      expect(testListener.processedChanges[0].INSERT.length).toBe(1)
+      expect(testListener.processedChanges[0].INSERT[0].data.name).toBe('Test User')
     })
 
-    // Clear previous events
-    listener.updateEvents = []
+    it('should detect update operations', async () => {
+      // Insert test user
+      const user = await userRepository.save({
+        name: 'Test User',
+        email: 'test@example.com',
+      })
 
-    // Update the entity
-    await repository.update(entity.id, { active: true, name: 'Test UPDATE - Modified' })
+      // Wait for processing the insert
+      await new Promise((resolve) => setTimeout(resolve, 1000))
 
-    // Wait for event processing
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+      testListener.processedChanges = [] // Reset processed changes
 
-    // Check if the listener received the event
-    expect(listener.updateEvents.length).toBeGreaterThanOrEqual(1)
+      // Update user
+      await userRepository.update(user.id, {
+        name: 'Updated User',
+      })
 
-    const updateEvent = listener.updateEvents.find((e) => e.new.id === entity.id)
-    expect(updateEvent).toBeDefined()
-    if (updateEvent) {
-      expect(updateEvent.old.active).toBe(false)
-      expect(updateEvent.new.active).toBe(true)
-      expect(updateEvent.old.name).toBe('Test UPDATE')
-      expect(updateEvent.new.name).toBe('Test UPDATE - Modified')
-      expect(updateEvent.updatedFields).toContain('active')
-      expect(updateEvent.updatedFields).toContain('name')
-    }
+      // Wait for processing
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+
+      // Verify listener was called
+      expect(testListener.processedChanges.length).toBe(1)
+      expect(testListener.processedChanges[0].UPDATE.length).toBe(1)
+      expect(testListener.processedChanges[0].UPDATE[0].data.new.name).toBe('Updated User')
+      expect(testListener.processedChanges[0].UPDATE[0].data.old.name).toBe('Test User')
+    })
+
+    it('should detect delete operations', async () => {
+      // Insert test user
+      const user = await userRepository.save({
+        name: 'Test User',
+        email: 'test@example.com',
+      })
+
+      // Wait for processing the insert
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+
+      testListener.processedChanges = [] // Reset processed changes
+
+      // Delete user
+      await userRepository.delete(user.id)
+
+      // Wait for processing
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+
+      // Verify listener was called
+      expect(testListener.processedChanges.length).toBe(1)
+      expect(testListener.processedChanges[0].DELETE.length).toBe(1)
+      expect(testListener.processedChanges[0].DELETE[0].data.name).toBe('Test User')
+    })
   })
 
-  it('should detect a DELETE event', async () => {
-    // Create a test entity
-    const entity = await repository.save({
-      name: 'Test DELETE',
-      active: true,
+  describe('Concurrency', () => {
+    it('should handle multiple concurrent updates', async () => {
+      // Create 10 users
+      const users = await Promise.all(
+        Array.from({ length: 10 }, (_, i) =>
+          userRepository.save({
+            name: `User ${i}`,
+            email: `user${i}@example.com`,
+          })
+        )
+      )
+
+      // Wait for processing the inserts
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      testListener.processedChanges = [] // Reset processed changes
+
+      // Set a processing delay to simulate slow processing
+      testListener.processingDelay = 100
+
+      // Update all users concurrently
+      await Promise.all(
+        users.map((user, i) =>
+          userRepository.update(user.id, {
+            name: `Updated User ${i}`,
+          })
+        )
+      )
+
+      // Wait for processing
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+
+      // Verify all updates were processed
+      const totalUpdates = testListener.processedChanges.reduce((sum, change) => sum + change.UPDATE.length, 0)
+      expect(totalUpdates).toBe(10)
     })
 
-    // Clear previous events
-    listener.deleteEvents = []
+    it('should maintain message order during processing', async () => {
+      // Create a user
+      const user = await userRepository.save({
+        name: 'Order Test User',
+        email: 'order@example.com',
+      })
 
-    // Delete the entity
-    await repository.delete(entity.id)
+      // Wait for processing the insert
+      await new Promise((resolve) => setTimeout(resolve, 1000))
 
-    // Wait for event processing
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+      testListener.processedChanges = [] // Reset processed changes
 
-    // Check if the listener received the event
-    expect(listener.deleteEvents.length).toBeGreaterThanOrEqual(1)
-    expect(listener.deleteEvents.some((e) => e.id === entity.id)).toBe(true)
-    expect(listener.deleteEvents.some((e) => e.name === 'Test DELETE')).toBe(true)
+      // Set a processing delay to simulate slow processing
+      testListener.processingDelay = 150
+
+      // Make 5 sequential updates
+      for (let i = 1; i <= 5; i++) {
+        await userRepository.update(user.id, {
+          name: `Update ${i}`,
+        })
+        // Don't wait between updates to test ordering
+      }
+
+      // Wait for processing
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+
+      // Get all processed names in order
+      const processedNames = testListener.processedChanges
+        .flatMap((change) => change.UPDATE)
+        .map((update) => update.data.new.name)
+
+      // The first processed update should be "Update 1"
+      expect(processedNames[0]).toBe('Update 1')
+      // The last processed update should be "Update 5"
+      expect(processedNames[processedNames.length - 1]).toBe('Update 5')
+    })
+
+    it('should handle failed processing and retries', async () => {
+      // Create a spy on markAsFailed
+      const markAsFailedSpy = jest.spyOn(queueService, 'markAsFailed')
+
+      // Set listener to fail
+      testListener.shouldFail = true
+
+      // Create a user
+      await userRepository.save({
+        name: 'Failure Test User',
+        email: 'failure@example.com',
+      })
+
+      // Wait for processing attempt
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+
+      // Verify the message was marked as failed
+      expect(markAsFailedSpy).toHaveBeenCalled()
+
+      // Verify no successful processing occurred
+      expect(testListener.processedChanges.length).toBe(0)
+
+      // Manually check the queue to verify the message status
+      const queueResult = await dataSource.query(`
+        SELECT * FROM test_pg_pubsub_queue
+        WHERE status = '${MessageStatus.FAILED}'
+      `)
+
+      expect(queueResult.length).toBe(1)
+      expect(queueResult[0].retry_count).toBe(1)
+
+      // Reset spy
+      markAsFailedSpy.mockRestore()
+    })
+
+    it('should process messages when listener comes back online', async () => {
+      // Pause the service
+      await pgPubSubService.pause()
+
+      // Create several users while service is paused
+      await Promise.all([
+        userRepository.save({
+          name: 'Offline User 1',
+          email: 'offline1@example.com',
+        }),
+        userRepository.save({
+          name: 'Offline User 2',
+          email: 'offline2@example.com',
+        }),
+      ])
+
+      // Verify messages are in queue but not processed
+      const queueResult = await dataSource.query(`
+        SELECT COUNT(*) as count FROM test_pg_pubsub_queue WHERE status = '${MessageStatus.PENDING}'
+      `)
+
+      expect(Number(queueResult[0].count)).toBe(2)
+      expect(testListener.processedChanges.length).toBe(0)
+
+      // Resume the service
+      await pgPubSubService.resume()
+
+      // Wait for processing
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+
+      // Verify messages were processed
+      expect(testListener.processedChanges.length).toBeGreaterThan(0)
+
+      // Check that all messages were processed
+      const processedCount = testListener.processedChanges.reduce((sum, change) => sum + change.all.length, 0)
+      expect(processedCount).toBe(2)
+    })
   })
 })
