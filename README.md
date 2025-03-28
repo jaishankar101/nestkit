@@ -29,6 +29,7 @@ Documentation available at [https://cisstech.github.io/nestkit/](https://cisstec
 ## 📄 Articles
 
 - [NestJS Expand](https://medium.com/@mciissee/supercharging-nestjs-apis-a-deep-dive-into-dynamic-resource-expansion-0e932cc7b4f2)
+- [NestJS PgPubSub](https://medium.com/@mciissee/building-real-time-applications-with-postgresql-and-nestjs-using-nestjs-pg-pubsub-db724187df3f)
 
 ## ⌨️ Development
 
