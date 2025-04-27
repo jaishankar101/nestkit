@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { SetMetadata } from '@nestjs/common'
+import 'reflect-metadata' // Import reflect-metadata
 
 /**
  * Symbol key for metadata associated with expanders.
@@ -9,9 +10,19 @@ import { SetMetadata } from '@nestjs/common'
 export const EXPANDER_KEY = Symbol('EXPANDER')
 
 /**
- * Symbol key for metadata associated with expandable parameters.
+ * Symbol key for metadata associated with classes containing reusable expander methods.
+ */
+export const EXPANDER_METHODS_KEY = Symbol('EXPANDER_METHODS') // Renamed from REUSABLE_EXPANDER_KEY
+
+/**
+ * Symbol key for metadata associated with expandable parameters on controller/expander methods.
  */
 export const EXPANDABLE_KEY = Symbol('EXPANDABLE')
+
+/**
+ * Symbol key for metadata associated with linking reusable expander methods.
+ */
+export const USE_EXPANSION_METHOD_KEY = Symbol('USE_EXPANSION_METHOD')
 
 /**
  * Symbol key for metadata associated with selectable parameters.
@@ -36,9 +47,67 @@ export type ExpandContext<TRequest = any, TParentResource = any> = {
 }
 
 /**
- * Represents a method that can be used for expanding a resource.
+ * Represents a standard method on an @Expander class.
  */
-export type ExpandMethod = (context: ExpandContext) => Promise<unknown>
+export type StandardExpandMethod = (context: ExpandContext) => Promise<unknown>
+
+/**
+ * Represents a method within a @ExpanderMethods class.
+ * It takes specific arguments derived from the context.
+ */
+export type ReusableExpandMethod = (...args: any[]) => Promise<unknown>
+
+/**
+ * Parameters for the @ExpanderMethods decorator.
+ */
+export type ExpanderMethodsParams = {
+  // Renamed from ReusableExpanderParams
+  // Currently empty, placeholder for future options
+}
+
+/**
+ * Configuration for the @UseExpansionMethod decorator.
+ * @typeparam TParentResource - The type of the parent DTO being expanded.
+ * @typeparam TReusableExpander - The type of the reusable expander class being used.
+ */
+export type UseExpansionMethodConfig<TParentResource = any, TReusableExpander = any> = {
+  /**
+   * The name of the field to populate in the expanded DTO.
+   */
+  name: string
+
+  /**
+   * The class decorated with @ExpanderMethods containing the logic.
+   */
+  class: new (...args: any[]) => TReusableExpander
+
+  /**
+   * The name of the method within the reusable expander class to call.
+   * Must be a key of TReusableExpander.
+   */
+  method: keyof TReusableExpander
+
+  /**
+   * Defines how to derive the arguments for the reusable method.
+   * Can be:
+   * - An array of strings: Each string is a property path on `context.parent`.
+   *   Values are extracted in order and passed as arguments.
+   *   Example: ['id', 'tenantId'] maps context.parent.id and context.parent.tenantId.
+   * - A function: Takes the `ExpandContext` and returns an array of arguments.
+   *   Use for complex logic, transformations, or accessing `context.request`.
+   *   Example: (context) => [context.parent.id, context.request.headers['x-tenant-id']]
+   */
+  params: (keyof TParentResource)[] | ((context: ExpandContext<any, TParentResource>) => any[])
+}
+
+/**
+ * Metadata stored by the @UseExpansionMethod decorator.
+ * This now directly stores the configuration object.
+ */
+export type UseExpansionMethodMetadata<TParentResource = any, TReusableExpander = any> = UseExpansionMethodConfig<
+  TParentResource,
+  TReusableExpander
+>
 
 /**
  * Represents parameters for making a controller/expander response expandable.
@@ -182,23 +251,65 @@ export type ExpansionErrorHandlingConfig = {
 }
 
 /**
- * Decorator function to mark a class as an expander.
+ * Decorator function to mark a class as a standard expander for a specific DTO.
  *
  * @remarks
  * - The class must be a NestJS provider.
+ * - Methods on this class matching requested expansion fields will be called.
  *
- * @param target - The DTO class to be expanded.
+ * @param target - The DTO class this expander is responsible for.
  * @returns A metadata decorator.
  */
 export const Expander = (target: Function) => SetMetadata(EXPANDER_KEY, target)
 
 /**
- * Decorator controller/expander method as expandable.
+ * Decorator function to mark a class as containing reusable expansion methods.
  *
  * @remarks
- * - The method must be a controller endpoint or a method of a class decorated with `@Expander`.
+ * - The class must be a NestJS provider.
+ * - Methods from this class can be linked to specific fields in standard @Expander
+ *   classes using @UseExpansionMethod.
  *
- * @param target - The class or method to be marked as expandable.
+ * @param params - Optional parameters.
+ * @returns A metadata decorator.
+ */
+export const ExpanderMethods = (params?: ExpanderMethodsParams) => SetMetadata(EXPANDER_METHODS_KEY, params ?? {}) // Renamed from ReusableExpander
+
+/**
+ * Decorator function to link a field in an @Expander class to a method
+ * in a @ExpanderMethods class. Applied at the CLASS level of an @Expander.
+ * Can be applied multiple times for different fields.
+ *
+ * @typeparam TParentResource - The type of the parent DTO (automatically inferred if possible).
+ * @typeparam TReusableExpander - The type of the reusable expander class.
+ *
+ * @param config - Configuration detailing the field name, reusable class, method, and parameter mapping.
+ * @returns A ClassDecorator.
+ */
+export const UseExpansionMethod = <TParentResource = any, TReusableExpander = any>(
+  config: UseExpansionMethodConfig<TParentResource, TReusableExpander>
+): ClassDecorator => {
+  // Explicitly return a ClassDecorator
+  return (target: Function) => {
+    // target is the class constructor
+    // Retrieve existing metadata array or initialize a new one
+    const existingMetadata: UseExpansionMethodMetadata[] = Reflect.getMetadata(USE_EXPANSION_METHOD_KEY, target) || []
+    // Add the new configuration
+    existingMetadata.push(config)
+    // Store the updated array back onto the class
+    Reflect.defineMetadata(USE_EXPANSION_METHOD_KEY, existingMetadata, target)
+  }
+}
+
+/**
+ * Decorator controller/expander method as expandable (for recursive expansion).
+ * Also used on controller endpoints to enable expansion for the response.
+ *
+ * @remarks
+ * - When used on an @Expander method, enables recursive expansion if that method's return value is requested for further expansion.
+ * - When used on a controller endpoint, enables expansion for the DTO returned by that endpoint.
+ *
+ * @param target - The DTO class returned by the method/endpoint.
  * @param config - Additional configuration for expandable parameters.
  * @returns A metadata decorator.
  */
@@ -206,7 +317,7 @@ export const Expandable = (target: Function, config?: Omit<ExpandableParams, 'ta
   SetMetadata(EXPANDABLE_KEY, { target, ...config })
 
 /**
- * Decorator function to mark a class or method as selectable.
+ * Decorator function to mark a controller endpoint response as selectable.
  *
  * @remarks
  * - You can mark all endpoints of your app as selectable by setting the {@link ExpandConfig.enableGlobalSelection} option of the `NestKitExpandModule.forRoot()`.

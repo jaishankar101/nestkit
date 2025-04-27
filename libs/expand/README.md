@@ -23,7 +23,8 @@ The NestJS Expandable Library is a powerful and flexible extension for NestJS ap
 
 - Dynamic Resource Expansion: Easily expand related resources in API responses using query parameters.
 - Dynamic Field Selection: Easily select only the fields you want to get from the API responses using query parameters.
-- Decorator-Based Configuration: Use decorators to mark classes and methods as expanders and expandable, simplifying configuration.
+- Decorator-Based Configuration: Use decorators like `@Expander`, `@Expandable`, `@ExpanderMethods`, and `@UseExpansionMethod` to configure expansion logic.
+- Reusable Expansion Logic: Define common expansion logic once in classes decorated with `@ExpanderMethods` and reuse it across multiple DTOs using `@UseExpansionMethod`.
 - Enhanced Metadata Handling: Improved handling of metadata allows for multiple decorators of the same type on the same target.
 - Configuration and Customization: Configure and customize the library to suit your application's specific needs.
 - Comprehensive Error Handling: Control how expansion errors are handled with policies (ignore, include, throw) and response customization.
@@ -57,7 +58,7 @@ yarn add @cisstech/nestjs-expand
   }
   ```
 
-- 2. Implement Expander Services
+- 2. Implement Expander Services (`@Expander`)
 
   ```typescript
   import { Injectable } from '@nestjs/common'
@@ -82,15 +83,58 @@ yarn add @cisstech/nestjs-expand
   }
   ```
 
-- 3. Register the controllers and expanders
+- 3. (Optional) Implement Reusable Expansion Logic (`@ExpanderMethods`)
+
+  ```typescript
+  // instructor.expander-methods.ts (Example)
+  import { Injectable } from '@nestjs/common'
+  import { ExpanderMethods } from '@cisstech/nestjs-expand'
+  import { InstructorService } from './instructor.service'
+  import { InstructorDTO } from './instructor.dto'
+
+  @Injectable()
+  @ExpanderMethods() // Mark class containing reusable methods
+  export class InstructorExpanderMethods {
+    constructor(private readonly instructorService: InstructorService) {}
+
+    async fetchById(id: number): Promise<InstructorDTO | null> {
+      return this.instructorService.getInstructorById(id)
+    }
+  }
+  ```
+
+- 4. (Optional) Link Reusable Logic in Standard Expanders (`@UseExpansionMethod`)
+
+  ```typescript
+  // course.expander.ts
+  import { Injectable } from '@nestjs/common'
+  import { Expander, UseExpansionMethod } from '@cisstech/nestjs-expand'
+  import { CourseDTO } from './course.dto'
+  import { InstructorExpanderMethods } from '../instructors/instructor.expander-methods' // Assuming this class exists
+
+  @Injectable()
+  @Expander(CourseDTO)
+  @UseExpansionMethod<CourseDTO, InstructorExpanderMethods>({
+    name: 'instructor', // Field to populate
+    class: InstructorExpanderMethods, // Class with reusable logic
+    method: 'fetchById', // Method to call
+    params: ['instructorId'], // Map parent.instructorId to the method's first arg
+  })
+  export class CourseExpander {
+    // No instructor method needed here if using @UseExpansionMethod
+  }
+  ```
+
+- 5. Register the controllers and providers (Expanders, ExpanderMethods classes)
 
 ```typescript
 // app.module.ts
 
 import { Module } from '@nestjs/common'
 import { NestKitExpandModule } from '@cisstech/nestjs-expand'
-import { UserExpander } from 'PATH_TO_FILE'
-import { UserController } from 'PATH_TO_FILE'
+import { CourseController } from 'PATH_TO_FILE'
+import { CourseExpander } from 'PATH_TO_FILE'
+import { InstructorExpanderMethods } from 'PATH_TO_FILE' // Register the class with reusable methods
 
 @Module({
   imports: [
@@ -102,7 +146,8 @@ import { UserController } from 'PATH_TO_FILE'
       },
     }),
   ],
-  providers: [UserExpander],
+  controllers: [CourseController],
+  providers: [CourseExpander, InstructorExpanderMethods], // Add all expander/methods classes
 })
 export class AppModule {}
 ```
@@ -156,8 +201,7 @@ findAll() {
 
 For detailed documentation, examples, and advanced usage, please refer to the official documentation at <https://cisstech.github.io/nestkit/docs/nestjs-expand/getting-started>
 
-A presentation article is also available [medium](https://medium.com/@mciissee/supercharging-nestjs-apis-a-deep-dive-into-dynamic-resource-expansion-0e932cc7b4f2)
-Example with per-endpoint error policy:
+A presentation article is also available [medium](https://medium.com/p/08c06be4c2ba)
 
 ## License
 

@@ -1,20 +1,14 @@
-import { ExpandContext, Expander } from '@cisstech/nestjs-expand'
+import { Expander, UseExpansionMethod } from '@cisstech/nestjs-expand'
 import { Injectable } from '@nestjs/common'
-import { InstructorDTO } from '../instructors/instructor.dto'
-import { InstructorService } from '../instructors/instructor.service'
+import { InstructorExpander } from '../instructors/instructor.expander'
 import { CourseDTO } from './course.dto'
 
 @Injectable()
 @Expander(CourseDTO)
-export class CourseExpander {
-  constructor(private readonly instructorService: InstructorService) {}
-
-  async instructor(context: ExpandContext<Request, CourseDTO>): Promise<InstructorDTO> {
-    const { parent } = context
-    const instructor = await this.instructorService.getInstructorById(parent.instructorId)
-    if (!instructor) {
-      throw new Error(`Instructor with id ${parent.instructorId} not found`)
-    }
-    return instructor
-  }
-}
+@UseExpansionMethod<CourseDTO>({
+  name: 'instructor', // Field name to populate
+  class: InstructorExpander, // The reusable logic class
+  method: 'fetchInstructorById', // Method in InstructorExpander
+  params: ['instructorId'], // Map parent.instructorId to the first arg of fetchInstructorById
+})
+export class CourseExpander {}

@@ -4,6 +4,7 @@ import { CourseController } from './courses/course.controller'
 import { CourseExpander } from './courses/course.expander'
 import { CourseService } from './courses/course.service'
 import { InstructorService } from './instructors/instructor.service'
+import { InstructorExpander } from './instructors/instructor.expander'
 
 @Module({
   imports: [
@@ -13,6 +14,6 @@ import { InstructorService } from './instructors/instructor.service'
     }),
   ],
   controllers: [CourseController],
-  providers: [CourseService, InstructorService, CourseExpander],
+  providers: [CourseService, InstructorService, CourseExpander, InstructorExpander],
 })
 export class ExpandSampleModule {}

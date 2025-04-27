@@ -1,7 +1,7 @@
 import { Controller, Get, INestApplication, Injectable, Module, Param } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import * as request from 'supertest'
-import { ExpandContext, Expandable, Expander, Selectable } from './expand'
+import { ExpandContext, Expandable, Expander, ExpanderMethods, Selectable, UseExpansionMethod } from './expand'
 import { NestKitExpandModule } from './expand.module'
 
 //#region DTOs
@@ -110,38 +110,47 @@ class SchoolService {
 }
 //#endregion
 
+//#region Expansion methods
+@Injectable()
+@ExpanderMethods()
+class DepartmentExpandMethods {
+  constructor(private readonly departmentService: DepartmentService) {}
+
+  @Expandable(DepartmentDTO)
+  async findById(departmentId: number): Promise<DepartmentDTO | undefined> {
+    return this.departmentService.findById(departmentId)
+  }
+}
+
+//#endregion
+
 //#region Expanders
 @Injectable()
 @Expander(CourseDTO)
+@UseExpansionMethod<CourseDTO>({
+  name: 'department',
+  class: DepartmentExpandMethods,
+  method: 'findById',
+  params: ['departmentId'],
+})
 class CourseExpander {
-  constructor(
-    private readonly instructorService: InstructorService,
-    private readonly departmentService: DepartmentService
-  ) {}
+  constructor(private readonly instructorService: InstructorService) {}
 
   @Expandable(InstructorDTO)
   async instructor(context: ExpandContext<Request, CourseDTO>): Promise<InstructorDTO | undefined> {
     return this.instructorService.findById(context.parent.instructorId)
   }
-
-  @Expandable(DepartmentDTO)
-  async department(context: ExpandContext<Request, CourseDTO>): Promise<DepartmentDTO | undefined> {
-    if (!context.parent.departmentId) return undefined
-    return this.departmentService.findById(context.parent.departmentId)
-  }
 }
 
 @Injectable()
 @Expander(InstructorDTO)
-class InstructorExpander {
-  constructor(private readonly departmentService: DepartmentService) {}
-
-  @Expandable(DepartmentDTO)
-  async department(context: ExpandContext<Request, InstructorDTO>): Promise<DepartmentDTO | undefined> {
-    if (!context.parent.departmentId) return undefined
-    return this.departmentService.findById(context.parent.departmentId)
-  }
-}
+@UseExpansionMethod<InstructorDTO>({
+  name: 'department',
+  class: DepartmentExpandMethods,
+  method: 'findById',
+  params: ['departmentId'],
+})
+class InstructorExpander {}
 
 @Injectable()
 @Expander(DepartmentDTO)
@@ -213,6 +222,7 @@ class CourseController {
     CourseExpander,
     InstructorExpander,
     DepartmentExpander,
+    DepartmentExpandMethods,
   ],
 })
 class TestModule {}
