@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## 1.10.0 (2025-04-27)
+
+
+### Bug Fixes
+
+* **nestjs-expand:** peerDependencies ([14a2a7e](https://github.com/cisstech/nestkit/commit/14a2a7e8c7ef3db6f0b5fc0b8e9155e714203d36))
+
 ## 1.9.0 (2025-03-23)
 
 ## 1.8.0 (2025-03-14)
