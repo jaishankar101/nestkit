@@ -16,7 +16,8 @@
   "peerDependencies": {
     "@nestjs/common": "^10.x",
     "@nestjs/core": "^10.x",
-    "@golevelup/nestjs-discovery": "^4.x"
+    "@golevelup/nestjs-discovery": "^4.x",
+    "reflect-metadata": "^0.1.x"
   },
   "type": "commonjs",
   "main": "./src/index.js",
