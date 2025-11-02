@@ -208,6 +208,12 @@ export type PgPubSubConfig = {
   databaseUrl: string
 
   /**
+   * SSL configuration for the database connection.
+   * Passed directly to pg-listen/node-postgres.
+   */
+  ssl?: any
+
+  /**
    * Schema on which the tables are located.
    * If not provided, the default {@link PG_PUBSUB_TRIGGER_SCHEMA} will be used.
 
