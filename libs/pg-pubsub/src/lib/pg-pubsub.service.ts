@@ -76,15 +76,18 @@ export class PgPubSubService implements OnModuleInit, OnModuleDestroy {
    */
   async resume(): Promise<void> {
     return new Promise((resolve) => {
+      // Build connection config with SSL support
+      const connectionConfig = {
+        connectionString: this.config.databaseUrl,
+        ...(this.config.ssl && { ssl: this.config.ssl }),
+      }
+
       this.postgresSubscriber =
         this.postgresSubscriber ??
-        createPostgresSubscriber(
-          { connectionString: this.config.databaseUrl },
-          {
-            retryInterval: (retryCount) => Math.min(1000 * 2 ** retryCount, 30000),
-            retryTimeout: Number.POSITIVE_INFINITY,
-          }
-        )
+        createPostgresSubscriber(connectionConfig, {
+          retryInterval: (retryCount) => Math.min(1000 * 2 ** retryCount, 30000),
+          retryTimeout: Number.POSITIVE_INFINITY,
+        })
 
       this.postgresSubscriber.events.on('error', (error) => {
         this.logger.error(error)
