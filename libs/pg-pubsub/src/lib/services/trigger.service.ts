@@ -1,6 +1,12 @@
 import { Inject, Injectable, Logger } from '@nestjs/common'
 import { DataSource } from 'typeorm'
-import { PG_PUBSUB_CONFIG, PG_PUBSUB_QUEUE_TABLE, PgPubSubConfig, PgTableChangeType } from '../pg-pubsub'
+import {
+  PG_PUBSUB_CONFIG,
+  PG_PUBSUB_QUEUE_SCHEMA,
+  PG_PUBSUB_QUEUE_TABLE,
+  PgPubSubConfig,
+  PgTableChangeType,
+} from '../pg-pubsub'
 import { ListenerDiscovery } from './listener-discovery.service'
 
 export interface TriggerMetadata {
@@ -140,7 +146,9 @@ export class PgTriggerService {
             END IF;
 
             -- Insert into queue table and get the inserted ID
-            INSERT INTO "${this.config.queue?.table ?? PG_PUBSUB_QUEUE_TABLE}"(channel, payload)
+            INSERT INTO "${this.config.queue?.schema ?? PG_PUBSUB_QUEUE_SCHEMA}"."${
+              this.config.queue?.table ?? PG_PUBSUB_QUEUE_TABLE
+            }"(channel, payload)
             VALUES ('${this.config.triggerPrefix}', payload)
             RETURNING id INTO inserted_id;
 

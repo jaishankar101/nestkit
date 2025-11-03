@@ -8,6 +8,7 @@ import {
   PG_PUBSUB_QUEUE_CLEANUP_INTERVAL,
   PG_PUBSUB_QUEUE_MAX_RETRIES,
   PG_PUBSUB_QUEUE_MESSAGE_TTL,
+  PG_PUBSUB_QUEUE_SCHEMA,
   PG_PUBSUB_QUEUE_TABLE,
   PgPubSubConfig,
   QueuedMessage,
@@ -17,6 +18,7 @@ import {
 export class QueueService {
   private readonly logger = new Logger(QueueService.name)
   private cleanupSubscription?: Subscription
+  private readonly queueSchema: string
   private readonly queueTable: string
   private readonly maxRetries: number
   private readonly messageTTL: number
@@ -28,6 +30,7 @@ export class QueueService {
     private readonly dataSource: DataSource,
     @Inject(PG_PUBSUB_CONFIG) private readonly config: PgPubSubConfig
   ) {
+    this.queueSchema = config.queue?.schema ?? PG_PUBSUB_QUEUE_SCHEMA
     this.queueTable = config.queue?.table ?? PG_PUBSUB_QUEUE_TABLE
     this.maxRetries = config.queue?.maxRetries ?? PG_PUBSUB_QUEUE_MAX_RETRIES
     this.messageTTL = config.queue?.messageTTL ?? PG_PUBSUB_QUEUE_MESSAGE_TTL
@@ -65,11 +68,11 @@ export class QueueService {
       // Get pending messages with FOR UPDATE SKIP LOCKED to prevent other processes from getting the same messages
       const [messages] = await queryRunner.query(
         `
-        UPDATE ${this.queueTable}
+        UPDATE "${this.queueSchema}"."${this.queueTable}"
         SET status = '${MessageStatus.PROCESSING}',
             next_retry_at = NOW() + interval '5 minutes'
         WHERE id IN (
-          SELECT id FROM ${this.queueTable}
+          SELECT id FROM "${this.queueSchema}"."${this.queueTable}"
           WHERE (status = '${MessageStatus.PENDING}' OR
                 (status = '${MessageStatus.FAILED}' AND
                  retry_count < $1 AND
@@ -107,7 +110,7 @@ export class QueueService {
     try {
       await this.dataSource.query(
         `
-        UPDATE "${this.queueTable}"
+        UPDATE "${this.queueSchema}"."${this.queueTable}"
         SET status = '${MessageStatus.PROCESSED}',
             processed_at = NOW()
         WHERE id = ANY($1)
@@ -128,7 +131,7 @@ export class QueueService {
     try {
       await this.dataSource.query(
         `
-        UPDATE "${this.queueTable}"
+        UPDATE "${this.queueSchema}"."${this.queueTable}"
         SET status = '${MessageStatus.FAILED}',
             retry_count = retry_count + 1,
             next_retry_at = CASE
@@ -151,7 +154,7 @@ export class QueueService {
   private async createQueueTable(): Promise<void> {
     try {
       await this.dataSource.query(`
-        CREATE TABLE IF NOT EXISTS "${this.queueTable}" (
+        CREATE TABLE IF NOT EXISTS "${this.queueSchema}"."${this.queueTable}" (
           id BIGSERIAL PRIMARY KEY,
           channel VARCHAR(255) NOT NULL,
           payload JSONB NOT NULL,
@@ -163,13 +166,13 @@ export class QueueService {
         );
 
         CREATE INDEX IF NOT EXISTS "${this.queueTable}_status_idx"
-          ON "${this.queueTable}"(status);
+          ON "${this.queueSchema}"."${this.queueTable}"(status);
         CREATE INDEX IF NOT EXISTS "${this.queueTable}_channel_idx"
-          ON "${this.queueTable}"(channel);
+          ON "${this.queueSchema}"."${this.queueTable}"(channel);
         CREATE INDEX IF NOT EXISTS "${this.queueTable}_next_retry_idx"
-          ON "${this.queueTable}"(next_retry_at);
+          ON "${this.queueSchema}"."${this.queueTable}"(next_retry_at);
       `)
-      this.logger.log(`Queue table "${this.queueTable}" created or already exists`)
+      this.logger.log(`Queue table "${this.queueSchema}"."${this.queueTable}" created or already exists`)
     } catch (error: any) {
       this.logger.error(`Failed to create queue table: ${error.message}`, error.stack)
       throw error
@@ -196,7 +199,7 @@ export class QueueService {
     try {
       const result = await this.dataSource.query(
         `
-        DELETE FROM "${this.queueTable}"
+        DELETE FROM "${this.queueSchema}"."${this.queueTable}"
         WHERE (status = '${MessageStatus.PROCESSED}' AND processed_at < $1)
           OR (created_at < $1 AND status = '${MessageStatus.FAILED}' AND retry_count >= $2)
         RETURNING id

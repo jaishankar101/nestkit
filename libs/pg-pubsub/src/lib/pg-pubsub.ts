@@ -277,6 +277,12 @@ export interface QueuedMessage<T = unknown> {
  */
 export interface QueueConfig {
   /**
+   * Name of the queue schema
+   * @default PG_PUBSUB_QUEUE_SCHEMA
+   */
+  schema?: string
+
+  /**
    * Name of the queue table
    * @default PG_PUBSUB_QUEUE_TABLE
    */
