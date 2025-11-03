@@ -119,7 +119,8 @@ describe('PgTriggerService', () => {
       await (triggerService as any).createTriggers(triggers, propNameToColumnNames)
 
       expect(dataSource.query).toHaveBeenCalledWith(
-        expect.stringContaining(`CREATE OR REPLACE FUNCTION test_prefix_users()`)
+        // eslint-disable-next-line no-useless-escape
+        expect.stringContaining(`CREATE OR REPLACE FUNCTION public.\"test_prefix_users\"()`)
       )
     })
 
