@@ -6,6 +6,7 @@ import {
   PG_PUBSUB_QUEUE_CLEANUP_INTERVAL,
   PG_PUBSUB_QUEUE_MAX_RETRIES,
   PG_PUBSUB_QUEUE_MESSAGE_TTL,
+  PG_PUBSUB_QUEUE_TABLE,
   PG_PUBSUB_TRIGGER_NAME,
   PG_PUBSUB_TRIGGER_SCHEMA,
   PgPubSubConfig,
@@ -38,7 +39,7 @@ export class PgPubSubModule {
             triggerSchema: (config.triggerSchema || PG_PUBSUB_TRIGGER_SCHEMA).trim(),
             triggerPrefix: (config.triggerPrefix || PG_PUBSUB_TRIGGER_NAME).trim(),
             queue: {
-              table: 'pg_pubsub_queue',
+              table: PG_PUBSUB_QUEUE_TABLE,
               maxRetries: PG_PUBSUB_QUEUE_MAX_RETRIES,
               messageTTL: PG_PUBSUB_QUEUE_MESSAGE_TTL,
               cleanupInterval: PG_PUBSUB_QUEUE_CLEANUP_INTERVAL,
