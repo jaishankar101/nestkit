@@ -14,6 +14,7 @@ describe('QueueService', () => {
     databaseUrl: 'postgresql://test:test@localhost:5432/test',
     triggerPrefix: 'test_prefix',
     queue: {
+      schema: 'test_schema',
       table: 'test_queue',
       maxRetries: 3,
       messageTTL: 3600000,
@@ -99,7 +100,10 @@ describe('QueueService', () => {
     it('should mark a message as processed', async () => {
       await queueService.markAsProcessed([1])
 
-      expect(dataSource.query).toHaveBeenCalledWith(expect.stringContaining(`UPDATE "${config.queue.table}"`), [[1]])
+      expect(dataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining(`UPDATE "${config.queue.schema}"."${config.queue.table}"`),
+        [[1]]
+      )
     })
   })
 
@@ -107,10 +111,10 @@ describe('QueueService', () => {
     it('should mark a message as failed and update retry count', async () => {
       await queueService.markAsFailed([1])
 
-      expect(dataSource.query).toHaveBeenCalledWith(expect.stringContaining(`UPDATE "${config.queue.table}"`), [
-        config.queue.maxRetries,
-        [1],
-      ])
+      expect(dataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining(`UPDATE "${config.queue.schema}"."${config.queue.table}"`),
+        [config.queue.maxRetries, [1]]
+      )
     })
   })
 
@@ -121,7 +125,7 @@ describe('QueueService', () => {
       await (queueService as any).cleanupOldMessages()
 
       expect(dataSource.query).toHaveBeenCalledWith(
-        expect.stringContaining(`DELETE FROM "${config.queue.table}"`),
+        expect.stringContaining(`DELETE FROM "${config.queue.schema}"."${config.queue.table}"`),
         expect.any(Array)
       )
     })
