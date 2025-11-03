@@ -14,6 +14,11 @@ export const PG_PUBSUB_TRIGGER_NAME = 'pubsub_trigger'
 export const PG_PUBSUB_TRIGGER_SCHEMA = 'public'
 
 /**
+ * Name of the PostgreSQL pubsub queue schema.
+ */
+export const PG_PUBSUB_QUEUE_SCHEMA = 'public'
+
+/**
  * Name of the PostgreSQL pubsub queue table.
  */
 export const PG_PUBSUB_QUEUE_TABLE = 'pg_pubsub_queue'
