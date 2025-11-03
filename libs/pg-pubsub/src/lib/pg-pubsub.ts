@@ -14,6 +14,11 @@ export const PG_PUBSUB_TRIGGER_NAME = 'pubsub_trigger'
 export const PG_PUBSUB_TRIGGER_SCHEMA = 'public'
 
 /**
+ * Name of the PostgreSQL pubsub queue schema.
+ */
+export const PG_PUBSUB_QUEUE_SCHEMA = 'public'
+
+/**
  * Name of the PostgreSQL pubsub queue table.
  */
 export const PG_PUBSUB_QUEUE_TABLE = 'pg_pubsub_queue'
@@ -271,6 +276,12 @@ export interface QueuedMessage<T = unknown> {
  * Queue processing configuration
  */
 export interface QueueConfig {
+  /**
+   * Name of the queue schema
+   * @default PG_PUBSUB_QUEUE_SCHEMA
+   */
+  schema?: string
+
   /**
    * Name of the queue table
    * @default PG_PUBSUB_QUEUE_TABLE
