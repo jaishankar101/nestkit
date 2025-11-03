@@ -103,7 +103,7 @@ export class PgTriggerService {
 
         await this.dataSource.query(`
           -- Create the trigger function
-          CREATE OR REPLACE FUNCTION ${t.name}()
+          CREATE OR REPLACE FUNCTION ${t.schema}."${t.name}"()
           RETURNS TRIGGER
           AS $BODY$
           DECLARE
@@ -158,7 +158,7 @@ export class PgTriggerService {
           -- Create the trigger
           CREATE TRIGGER ${t.name}
           AFTER ${events.join(' OR ')} ON ${table}
-          FOR EACH ROW EXECUTE FUNCTION ${t.name}();
+          FOR EACH ROW EXECUTE FUNCTION ${t.schema}."${t.name}"();
         `)
       })
     )
