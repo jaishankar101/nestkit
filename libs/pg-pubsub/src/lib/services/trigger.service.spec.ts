@@ -45,26 +45,139 @@ describe('PgTriggerService', () => {
   })
 
   describe('setupTriggers', () => {
-    it('should setup triggers based on discovery result', async () => {
-      const listTriggersSpy = jest.spyOn(triggerService as any, 'listTriggers')
-      const dropTriggersSpy = jest.spyOn(triggerService as any, 'dropTriggers')
-      const createTriggersSpy = jest.spyOn(triggerService as any, 'createTriggers')
+    it('should use differential update: upsert desired triggers then drop obsolete ones', async () => {
+      // Mock existing triggers
+      const existingTriggers = [
+        { name: 'test_prefix_posts', schema: 'public', table: 'posts' },
+        { name: 'test_prefix_users', schema: 'public', table: 'users' },
+      ]
+      const listTriggersSpy = jest
+        .spyOn(triggerService as any, 'listTriggers')
+        .mockResolvedValue(existingTriggers)
+      const dropTriggersSpy = jest.spyOn(triggerService as any, 'dropTriggers').mockResolvedValue(undefined)
+      const createTriggersSpy = jest.spyOn(triggerService as any, 'createTriggers').mockResolvedValue(undefined)
 
+      // New discovery wants users and comments (posts is obsolete)
       const mockDiscovery = {
-        listeners: [{ table: 'users', schema: 'public', events: ['INSERT'] }],
+        listeners: [
+          { table: 'users', schema: 'public', events: ['INSERT'] },
+          { table: 'comments', schema: 'public', events: ['INSERT', 'UPDATE'] },
+        ],
         propNameToColumnNames: {
-          users: new Map([
-            ['name', 'name'],
-            ['email', 'email'],
-          ]),
+          users: new Map([['name', 'name']]),
+          comments: new Map([['text', 'text']]),
         },
       }
 
       await triggerService.setupTriggers(mockDiscovery as any)
 
       expect(listTriggersSpy).toHaveBeenCalled()
-      expect(dropTriggersSpy).toHaveBeenCalled()
+
+      // Verify createTriggers was called first with ALL desired triggers
+      expect(createTriggersSpy).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ table: 'users', schema: 'public' }),
+          expect.objectContaining({ table: 'comments', schema: 'public' }),
+        ]),
+        mockDiscovery.propNameToColumnNames
+      )
+
+      // Verify dropTriggers was called with ONLY obsolete trigger (posts)
+      expect(dropTriggersSpy).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.objectContaining({ table: 'posts' })])
+      )
+
+      // Verify order: create before drop
+      expect(createTriggersSpy.mock.invocationCallOrder[0]).toBeLessThan(
+        dropTriggersSpy.mock.invocationCallOrder[0]
+      )
+    })
+
+    it('should only upsert when no obsolete triggers exist', async () => {
+      const existingTriggers = [{ name: 'test_prefix_users', schema: 'public', table: 'users' }]
+      jest.spyOn(triggerService as any, 'listTriggers').mockResolvedValue(existingTriggers)
+      const dropTriggersSpy = jest.spyOn(triggerService as any, 'dropTriggers').mockResolvedValue(undefined)
+      const createTriggersSpy = jest.spyOn(triggerService as any, 'createTriggers').mockResolvedValue(undefined)
+
+      const mockDiscovery = {
+        listeners: [
+          { table: 'users', schema: 'public', events: ['INSERT'] },
+          { table: 'posts', schema: 'public', events: ['INSERT'] },
+        ],
+        propNameToColumnNames: {
+          users: new Map([['name', 'name']]),
+          posts: new Map([['title', 'title']]),
+        },
+      }
+
+      await triggerService.setupTriggers(mockDiscovery as any)
+
       expect(createTriggersSpy).toHaveBeenCalled()
+      expect(dropTriggersSpy).not.toHaveBeenCalled()
+    })
+
+    it('should handle empty existing triggers (fresh setup)', async () => {
+      jest.spyOn(triggerService as any, 'listTriggers').mockResolvedValue([])
+      const dropTriggersSpy = jest.spyOn(triggerService as any, 'dropTriggers').mockResolvedValue(undefined)
+      const createTriggersSpy = jest.spyOn(triggerService as any, 'createTriggers').mockResolvedValue(undefined)
+
+      const mockDiscovery = {
+        listeners: [{ table: 'users', schema: 'public', events: ['INSERT'] }],
+        propNameToColumnNames: {
+          users: new Map([['name', 'name']]),
+        },
+      }
+
+      await triggerService.setupTriggers(mockDiscovery as any)
+
+      expect(createTriggersSpy).toHaveBeenCalled()
+      expect(dropTriggersSpy).not.toHaveBeenCalled()
+    })
+
+    it('should drop all triggers when no listeners provided', async () => {
+      const existingTriggers = [
+        { name: 'test_prefix_users', schema: 'public', table: 'users' },
+        { name: 'test_prefix_posts', schema: 'public', table: 'posts' },
+      ]
+      jest.spyOn(triggerService as any, 'listTriggers').mockResolvedValue(existingTriggers)
+      const dropTriggersSpy = jest.spyOn(triggerService as any, 'dropTriggers').mockResolvedValue(undefined)
+      const createTriggersSpy = jest.spyOn(triggerService as any, 'createTriggers').mockResolvedValue(undefined)
+
+      const mockDiscovery = {
+        listeners: [],
+        propNameToColumnNames: {},
+      }
+
+      await triggerService.setupTriggers(mockDiscovery as any)
+
+      expect(createTriggersSpy).not.toHaveBeenCalled()
+      expect(dropTriggersSpy).toHaveBeenCalledWith(existingTriggers)
+    })
+
+    it('should handle schema differences correctly', async () => {
+      const existingTriggers = [
+        { name: 'test_prefix_users', schema: 'public', table: 'users' },
+        { name: 'test_prefix_users', schema: 'private', table: 'users' },
+      ]
+      jest.spyOn(triggerService as any, 'listTriggers').mockResolvedValue(existingTriggers)
+      const dropTriggersSpy = jest.spyOn(triggerService as any, 'dropTriggers').mockResolvedValue(undefined)
+      const createTriggersSpy = jest.spyOn(triggerService as any, 'createTriggers').mockResolvedValue(undefined)
+
+      // Only want public.users
+      const mockDiscovery = {
+        listeners: [{ table: 'users', schema: 'public', events: ['INSERT'] }],
+        propNameToColumnNames: {
+          users: new Map([['name', 'name']]),
+        },
+      }
+
+      await triggerService.setupTriggers(mockDiscovery as any)
+
+      expect(createTriggersSpy).toHaveBeenCalled()
+      // Should drop private.users but not public.users
+      expect(dropTriggersSpy).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.objectContaining({ schema: 'private', table: 'users' })])
+      )
     })
   })
 
