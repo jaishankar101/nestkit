@@ -37,25 +37,55 @@ export class PgTriggerService {
   ) {}
 
   /**
-   * Setup triggers for the given listener discovery result.
-   * All existing pubsub triggers in the database will be dropped before creating new ones.
+   * Setup triggers for the given listener discovery result using differential update.
+   * Only obsolete triggers are dropped, and new/changed triggers are upserted.
+   * This approach minimizes disruption and prevents event loss during reconfiguration.
    * @param discovery The listener discovery result.
    */
   async setupTriggers(discovery: ListenerDiscovery): Promise<void> {
-    const triggers = await this.listTriggers()
+    const existingTriggers = await this.listTriggers()
 
-    await this.dropTriggers(triggers)
-
-    await this.createTriggers(
-      discovery.listeners.map<TriggerMetadata>((listener) => ({
+    // Map of desired triggers: key = "schema.table", value = trigger metadata
+    const desiredTriggersMap = new Map<string, TriggerMetadata>()
+    discovery.listeners.forEach((listener) => {
+      const key = `${listener.schema}.${listener.table}`
+      desiredTriggersMap.set(key, {
         table: listener.table,
         schema: listener.schema,
         name: `${this.config.triggerPrefix}_${listener.table.toLowerCase()}`,
         events: listener.events,
         payloadFields: listener.payloadFields,
-      })),
-      discovery.propNameToColumnNames
-    )
+      })
+    })
+
+    // Map of existing triggers: key = "schema.table"
+    const existingTriggersMap = new Map<string, TriggerMetadata>()
+    existingTriggers.forEach((trigger) => {
+      const key = `${trigger.schema}.${trigger.table}`
+      existingTriggersMap.set(key, trigger)
+    })
+
+    // Calculate diff: B - A (triggers to drop - obsolete ones)
+    const triggersToRemove: TriggerMetadata[] = []
+    existingTriggersMap.forEach((trigger, key) => {
+      if (!desiredTriggersMap.has(key)) {
+        triggersToRemove.push(trigger)
+      }
+    })
+
+    // Calculate triggers to upsert (create or replace)
+    const triggersToUpsert: TriggerMetadata[] = Array.from(desiredTriggersMap.values())
+
+    // First, upsert all desired triggers (atomic per trigger using CREATE OR REPLACE)
+    // This ensures triggers are always active, preventing event loss
+    if (triggersToUpsert.length > 0) {
+      await this.createTriggers(triggersToUpsert, discovery.propNameToColumnNames)
+    }
+
+    // Then, drop obsolete triggers (safe now since new ones are active)
+    if (triggersToRemove.length > 0) {
+      await this.dropTriggers(triggersToRemove)
+    }
   }
 
   private async listTriggers(): Promise<TriggerMetadata[]> {
@@ -85,7 +115,7 @@ export class PgTriggerService {
   ): Promise<void> {
     if (!triggers.length) return
 
-    this.logger.log(`Creating triggers:\n${triggers.map((t) => `${t.schema}.${t.table}.${t.name}`).join(',\n')}`)
+    this.logger.log(`Upserting triggers:\n${triggers.map((t) => `${t.schema}.${t.table}.${t.name}`).join(',\n')}`)
 
     await Promise.all(
       triggers.map(async (t) => {
