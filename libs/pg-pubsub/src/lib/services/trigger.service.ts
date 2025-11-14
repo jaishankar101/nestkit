@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common'
-import { DataSource } from 'typeorm'
+import { DataSource, QueryRunner } from 'typeorm'
 import {
   PG_PUBSUB_CONFIG,
   PG_PUBSUB_QUEUE_SCHEMA,
@@ -39,23 +39,38 @@ export class PgTriggerService {
   /**
    * Setup triggers for the given listener discovery result.
    * All existing pubsub triggers in the database will be dropped before creating new ones.
+   * This operation is performed atomically within a single transaction to prevent event loss.
    * @param discovery The listener discovery result.
    */
   async setupTriggers(discovery: ListenerDiscovery): Promise<void> {
-    const triggers = await this.listTriggers()
+    const queryRunner = this.dataSource.createQueryRunner()
+    await queryRunner.connect()
+    await queryRunner.startTransaction()
 
-    await this.dropTriggers(triggers)
+    try {
+      const triggers = await this.listTriggers()
 
-    await this.createTriggers(
-      discovery.listeners.map<TriggerMetadata>((listener) => ({
-        table: listener.table,
-        schema: listener.schema,
-        name: `${this.config.triggerPrefix}_${listener.table.toLowerCase()}`,
-        events: listener.events,
-        payloadFields: listener.payloadFields,
-      })),
-      discovery.propNameToColumnNames
-    )
+      await this.dropTriggers(triggers, queryRunner)
+
+      await this.createTriggers(
+        discovery.listeners.map<TriggerMetadata>((listener) => ({
+          table: listener.table,
+          schema: listener.schema,
+          name: `${this.config.triggerPrefix}_${listener.table.toLowerCase()}`,
+          events: listener.events,
+          payloadFields: listener.payloadFields,
+        })),
+        discovery.propNameToColumnNames,
+        queryRunner
+      )
+
+      await queryRunner.commitTransaction()
+    } catch (error) {
+      await queryRunner.rollbackTransaction()
+      throw error
+    } finally {
+      await queryRunner.release()
+    }
   }
 
   private async listTriggers(): Promise<TriggerMetadata[]> {
@@ -70,22 +85,27 @@ export class PgTriggerService {
     return triggers ?? []
   }
 
-  private async dropTriggers(triggers: TriggerMetadata[]): Promise<void> {
+  private async dropTriggers(triggers: TriggerMetadata[], queryRunner?: QueryRunner): Promise<void> {
     if (!triggers.length) return
 
     this.logger.log(`Dropping triggers:\n${triggers.map((t) => `${t.schema}.${t.table}.${t.name}`).join(',\n')}`)
-    await this.dataSource.query(
+
+    const executor = queryRunner || this.dataSource
+    await executor.query(
       triggers.map((t) => `DROP FUNCTION IF EXISTS ${t.schema}."${t.name}" CASCADE`).join('; ')
     )
   }
 
   private async createTriggers(
     triggers: TriggerMetadata[],
-    propNameToColumnNames: Record<string, Map<string, string>>
+    propNameToColumnNames: Record<string, Map<string, string>>,
+    queryRunner?: QueryRunner
   ): Promise<void> {
     if (!triggers.length) return
 
     this.logger.log(`Creating triggers:\n${triggers.map((t) => `${t.schema}.${t.table}.${t.name}`).join(',\n')}`)
+
+    const executor = queryRunner || this.dataSource
 
     await Promise.all(
       triggers.map(async (t) => {
@@ -107,7 +127,7 @@ export class PgTriggerService {
 
         const events = t.events?.length ? t.events : ['INSERT', 'UPDATE', 'DELETE']
 
-        await this.dataSource.query(`
+        await executor.query(`
           -- Create the trigger function
           CREATE OR REPLACE FUNCTION ${t.schema}."${t.name}"()
           RETURNS TRIGGER
