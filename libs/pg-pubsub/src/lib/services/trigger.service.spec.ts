@@ -51,9 +51,7 @@ describe('PgTriggerService', () => {
         { name: 'test_prefix_posts', schema: 'public', table: 'posts' },
         { name: 'test_prefix_users', schema: 'public', table: 'users' },
       ]
-      const listTriggersSpy = jest
-        .spyOn(triggerService as any, 'listTriggers')
-        .mockResolvedValue(existingTriggers)
+      const listTriggersSpy = jest.spyOn(triggerService as any, 'listTriggers').mockResolvedValue(existingTriggers)
       const dropTriggersSpy = jest.spyOn(triggerService as any, 'dropTriggers').mockResolvedValue(undefined)
       const createTriggersSpy = jest.spyOn(triggerService as any, 'createTriggers').mockResolvedValue(undefined)
 
@@ -88,9 +86,7 @@ describe('PgTriggerService', () => {
       )
 
       // Verify order: create before drop
-      expect(createTriggersSpy.mock.invocationCallOrder[0]).toBeLessThan(
-        dropTriggersSpy.mock.invocationCallOrder[0]
-      )
+      expect(createTriggersSpy.mock.invocationCallOrder[0]).toBeLessThan(dropTriggersSpy.mock.invocationCallOrder[0])
     })
 
     it('should only upsert when no obsolete triggers exist', async () => {
