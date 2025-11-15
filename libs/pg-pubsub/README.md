@@ -31,6 +31,7 @@ The NestJS PG-PubSub library is a powerful tool that facilitates real-time commu
 - **Persistent Message Queue**: Messages are stored in a PostgreSQL table to prevent data loss
 - **Reactive Processing**: Immediately pulls and processes messages when notifications are received
 - **TTL and Retry System**: Implements time-to-live and automatic retries for failed message processing
+- **Queue Metadata**: Exposes retry count and creation timestamp to prevent stale data operations
 - **Message Ordering**: Preserves message processing order using row IDs
 - **Error Handling**: Provides mechanisms to handle and retry failed messages
 - **Auto Cleanup**: Automatically removes old processed messages to keep the queue size manageable
@@ -106,6 +107,17 @@ export class UserTableChangeListener implements PgTableChangeListener<User> {
       // Process all changes
       changes.all.forEach((change) => {
         console.log(`Change type: ${change.event} for user with id: ${change.data.id}`)
+
+        // Access metadata for retry information
+        if (change._metadata) {
+          console.log(`Retry count: ${change._metadata.retry_count}`)
+          console.log(`Created at: ${change._metadata.created_at}`)
+
+          // Perform different operations on retry events
+          if (change._metadata.retry_count >= 1) {
+            console.log('This is a retry - consider fetching latest data from DB')
+          }
+        }
       })
 
       // Process inserts
