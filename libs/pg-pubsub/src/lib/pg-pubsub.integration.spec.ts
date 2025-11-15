@@ -174,6 +174,47 @@ describe('PgPubSub Integration', () => {
       expect(testListener.processedChanges[0].DELETE.length).toBe(1)
       expect(testListener.processedChanges[0].DELETE[0].data.name).toBe('Test User')
     })
+
+    it('should include metadata in all operation types', async () => {
+      // Insert test user
+      const user = await userRepository.save({
+        name: 'Metadata All Ops User',
+        email: 'metadata-all@example.com',
+      })
+
+      // Wait for processing the insert
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+
+      // Check INSERT metadata
+      const insertChanges = testListener.processedChanges[0]
+      expect(insertChanges.INSERT[0]._metadata).toBeDefined()
+      expect(insertChanges.INSERT[0]._metadata?.retry_count).toBe(0)
+      expect(insertChanges.INSERT[0]._metadata?.created_at).toBeInstanceOf(Date)
+
+      testListener.processedChanges = [] // Reset
+
+      // Update user
+      await userRepository.update(user.id, { name: 'Updated Name' })
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+
+      // Check UPDATE metadata
+      const updateChanges = testListener.processedChanges[0]
+      expect(updateChanges.UPDATE[0]._metadata).toBeDefined()
+      expect(updateChanges.UPDATE[0]._metadata?.retry_count).toBe(0)
+      expect(updateChanges.UPDATE[0]._metadata?.created_at).toBeInstanceOf(Date)
+
+      testListener.processedChanges = [] // Reset
+
+      // Delete user
+      await userRepository.delete(user.id)
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+
+      // Check DELETE metadata
+      const deleteChanges = testListener.processedChanges[0]
+      expect(deleteChanges.DELETE[0]._metadata).toBeDefined()
+      expect(deleteChanges.DELETE[0]._metadata?.retry_count).toBe(0)
+      expect(deleteChanges.DELETE[0]._metadata?.created_at).toBeInstanceOf(Date)
+    })
   })
 
   describe('Concurrency', () => {

@@ -37,6 +37,13 @@ export class MessageProcessorService {
         try {
           const payload = message.payload as PgTableChangePayload<unknown>
           payload.id = message.id
+
+          // Add queue metadata to help with stale event detection
+          payload._metadata = {
+            retry_count: message.retry_count,
+            created_at: message.created_at,
+          }
+
           switch (payload.event) {
             case 'INSERT':
               {

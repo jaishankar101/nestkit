@@ -56,6 +56,14 @@ export type PgTableInsertPayload<TRow = unknown> = {
 
   /** Inserted row. */
   data: TRow
+
+  /** Queue metadata */
+  _metadata?: {
+    /** Number of times this message has been retried */
+    retry_count: number
+    /** When the message was originally created */
+    created_at: Date
+  }
 }
 
 /**
@@ -73,6 +81,14 @@ export type PgTableDeletePayload<TRow = unknown> = {
 
   /** Deleted row */
   data: TRow
+
+  /** Queue metadata */
+  _metadata?: {
+    /** Number of times this message has been retried */
+    retry_count: number
+    /** When the message was originally created */
+    created_at: Date
+  }
 }
 
 /**
@@ -98,6 +114,14 @@ export type PgTableUpdatePayload<TRow = unknown> = {
 
     /** List of updated columns. (object fields are not currently supported)  */
     updatedFields: string[]
+  }
+
+  /** Queue metadata */
+  _metadata?: {
+    /** Number of times this message has been retried */
+    retry_count: number
+    /** When the message was originally created */
+    created_at: Date
   }
 }
 
