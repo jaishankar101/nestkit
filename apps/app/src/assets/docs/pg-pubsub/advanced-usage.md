@@ -194,7 +194,6 @@ import { User } from './entities/user.entity'
 export class UserKafkaSyncListener implements PgTableChangeListener<User> {
   constructor(
     @InjectRepository(User) private userRepository: Repository<User>,
-    private kafkaProducer: KafkaProducer,
     private redisCache: RedisService
   ) {}
 
@@ -215,15 +214,6 @@ export class UserKafkaSyncListener implements PgTableChangeListener<User> {
           }
           userData = latestUser
         }
-
-        // Skip events older than 5 minutes for time-sensitive operations
-        if (change._metadata.created_at < userData.updated_at) {
-          await this.kafkaProducer.send({
-            topic: 'user-changes',
-            messages: [{ value: JSON.stringify(userData) }],
-          })
-        }
-        // Similarly:
         if (retryCount < 1) {
           await this.callExternalAPI(userData)
         } else {
